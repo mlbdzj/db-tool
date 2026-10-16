@@ -1,0 +1,226 @@
+import { useMemo, useState } from 'react';
+import CodeMirror from '@uiw/react-codemirror';
+import { MySQL, PostgreSQL, sql as sqlLang } from '@codemirror/lang-sql';
+import { ApiError, api } from '../lib/api';
+import { downloadText, formatDuration, formatNumber, toCsv, toJson } from '../lib/format';
+import type { Connection, DatabaseInfo, ResultSet } from '../lib/types';
+import { Grid } from './Grid';
+
+export interface SqlTabState {
+  id: string;
+  kind: 'sql';
+  connectionId: string;
+  db: string | null;
+  sql: string;
+  results: ResultSet[] | null;
+  error: string | null;
+  durationMs: number | null;
+  running: boolean;
+  activeResult: number;
+}
+
+interface Props {
+  connection: Connection;
+  databases: DatabaseInfo[];
+  tab: SqlTabState;
+  visible: boolean;
+  onPatch: (patch: Partial<SqlTabState>) => void;
+  onNotify: (text: string, kind?: 'ok' | 'error') => void;
+  onOpenHistory: () => void;
+}
+
+export function QueryTab({ connection, databases, tab, visible, onPatch, onNotify, onOpenHistory }: Props) {
+  const [editorHeight, setEditorHeight] = useState(220);
+
+  const extensions = useMemo(
+    () => [sqlLang({ dialect: connection.kind === 'postgres' ? PostgreSQL : MySQL })],
+    [connection.kind],
+  );
+
+  const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const result = tab.results?.[tab.activeResult] ?? null;
+
+  async function run(confirmUnsafe = false) {
+    if (tab.running) return;
+    const statement = tab.sql.trim();
+    if (!statement) {
+      onNotify('请输入要执行的 SQL', 'error');
+      return;
+    }
+    onPatch({ running: true, error: null });
+    try {
+      const response = await api.query(connection.id, tab.db, statement, confirmUnsafe);
+      onPatch({
+        results: response.results,
+        durationMs: response.durationMs,
+        error: null,
+        running: false,
+        activeResult: 0,
+      });
+      const rows = response.results.reduce((sum, entry) => sum + entry.rowCount, 0);
+      const affected = response.results.reduce((sum, entry) => sum + (entry.affectedRows ?? 0), 0);
+      onNotify(
+        response.results.length > 1
+          ? `执行完成 · ${response.results.length} 个结果集 · ${formatDuration(response.durationMs)}`
+          : rows > 0
+            ? `返回 ${formatNumber(rows)} 行 · ${formatDuration(response.durationMs)}`
+            : `影响 ${formatNumber(affected)} 行 · ${formatDuration(response.durationMs)}`,
+        'ok',
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === 'unscoped_write') {
+        const preview = (error.statements ?? []).map((statement) => statement.trim().slice(0, 160)).join('\n\n');
+        const confirmed = window.confirm(
+          `安全模式拦截：以下语句没有 WHERE 条件，会修改整张表。\n\n${preview}\n\n确认执行？`,
+        );
+        if (confirmed) {
+          await run(true);
+          return;
+        }
+        onPatch({ running: false });
+        return;
+      }
+      onPatch({
+        running: false,
+        results: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  function startResize(event: React.MouseEvent) {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = editorHeight;
+    const move = (moveEvent: MouseEvent) => {
+      setEditorHeight(Math.min(Math.max(90, startHeight + moveEvent.clientY - startY), window.innerHeight - 260));
+    };
+    const stop = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', stop);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+  }
+
+  return (
+    <div className="workspace" style={visible ? undefined : { display: 'none' }}>
+      <div className="toolbar">
+        <select
+          className="select"
+          value={tab.db ?? ''}
+          onChange={(event) => onPatch({ db: event.target.value || null })}
+        >
+          <option value="">（默认数据库）</option>
+          {databases
+            .filter((database) => !database.system)
+            .map((database) => (
+              <option key={database.name} value={database.name}>
+                {database.name}
+              </option>
+            ))}
+        </select>
+        <button type="button" className="btn btn--primary" onClick={() => void run()} disabled={tab.running}>
+          {tab.running ? '执行中…' : '▶ 运行'}
+        </button>
+        <span className="badge">Ctrl / ⌘ + Enter</span>
+        {connection.safeMode && <span className="badge badge--ok">安全模式</span>}
+        <span className="spacer" />
+        <button type="button" className="btn" onClick={() => onPatch({ sql: '' })}>
+          清空
+        </button>
+        <button type="button" className="btn" onClick={onOpenHistory}>
+          历史
+        </button>
+      </div>
+
+      <div className="editor" style={{ height: editorHeight }}>
+        <div
+          style={{ height: '100%' }}
+          onKeyDownCapture={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              event.preventDefault();
+              event.stopPropagation();
+              void run();
+            }
+          }}
+        >
+          <CodeMirror
+            value={tab.sql}
+            height="100%"
+            theme={theme}
+            extensions={extensions}
+            onChange={(value) => onPatch({ sql: value })}
+            basicSetup={{ lineNumbers: true, highlightActiveLine: true, foldGutter: true, autocompletion: false }}
+            placeholder="在这里写 SQL，Ctrl / ⌘ + Enter 执行"
+          />
+        </div>
+      </div>
+
+      <div className="splitter" onMouseDown={startResize} />
+
+      {tab.results && tab.results.length > 1 && (
+        <div className="result-tabs">
+          {tab.results.map((entry, index) => (
+            <button
+              type="button"
+              key={index}
+              className={index === tab.activeResult ? 'active' : undefined}
+              onClick={() => onPatch({ activeResult: index })}
+            >
+              结果 {index + 1}
+              {entry.columns.length > 0 ? ` (${entry.rowCount})` : ' (OK)'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab.error && (
+        <div className="panel-message panel-message--error">
+          <strong>执行失败</strong>
+          <pre>{tab.error}</pre>
+        </div>
+      )}
+
+      {!tab.error && result && result.columns.length === 0 && (
+        <div className="panel-message panel-message--ok">
+          语句执行成功，影响 {formatNumber(result.affectedRows ?? 0)} 行
+          {result.insertId !== null && result.insertId !== undefined ? `，新增记录自增 ID：${result.insertId}` : ''}
+          {tab.durationMs !== null ? ` · 耗时 ${formatDuration(tab.durationMs)}` : ''}
+        </div>
+      )}
+
+      {!tab.error && result && result.columns.length > 0 && (
+        <>
+          <div className="toolbar toolbar--sub">
+            <span className="badge">返回 {formatNumber(result.rowCount)} 行</span>
+            {tab.durationMs !== null && <span className="badge">耗时 {formatDuration(tab.durationMs)}</span>}
+            {result.truncated && <span className="badge badge--danger">结果已截断，仅显示前 5000 行</span>}
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn"
+              onClick={() => downloadText('result.csv', toCsv(result.columns, result.rows), 'text/csv;charset=utf-8')}
+            >
+              导出 CSV
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => downloadText('result.json', toJson(result.columns, result.rows), 'application/json;charset=utf-8')}
+            >
+              导出 JSON
+            </button>
+          </div>
+          <Grid columns={result.columns.map((name) => ({ name }))} rows={result.rows} rowNumberBase={1} />
+        </>
+      )}
+
+      {!tab.results && !tab.error && (
+        <div className="panel-message" style={{ color: 'var(--text-faint)' }}>
+          写一条 SQL 然后按 Ctrl / ⌘ + Enter。支持多条语句，结果会分成多个标签页显示。
+        </div>
+      )}
+    </div>
+  );
+}
