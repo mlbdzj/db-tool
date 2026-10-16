@@ -1,23 +1,25 @@
 # DB Tool
 
-一个本地优先的数据库管理工具，同时支持 **MySQL / MariaDB** 与 **PostgreSQL**。
-可以当成网页应用在浏览器里用，也可以打包成 Windows 桌面客户端（Electron）。
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-## 功能
+A local-first database management tool for **MySQL / MariaDB** and **PostgreSQL**.
+Use it as a web app in your browser, or package it as a desktop client (Electron).
 
-- **连接管理**：多套连接并存，密码用本机密钥加密后保存在本地，界面里永远不回显。
-- **库表浏览**：数据库 → 表 / 视图 → 字段结构，带主键、自增、注释标记。
-- **SQL 编辑器**：语法高亮、`Ctrl / ⌘ + Enter` 执行、多语句分结果集、行数与耗时统计、查询历史。
-- **表数据浏览与编辑**：分页、排序、`WHERE` 过滤、双击单元格改值、新增行、删除行，改动在一个事务里提交。
-- **导出**：结果集或整张表导出 CSV（带 UTF-8 BOM，Excel 直接可读）/ JSON，大表分块流式写出。
-- **安全模式**：拦截没有 `WHERE` 的 `UPDATE / DELETE / DROP / TRUNCATE`，确认后才执行；可按连接关闭。
+## Features
 
-## 环境要求
+- **Connection management** — keep several connections side by side. Passwords are encrypted with a key stored on your machine and are never sent back to the UI.
+- **Schema browsing** — databases → tables / views → columns, with primary key, auto-increment and comment markers.
+- **SQL editor** — syntax highlighting, run with `Ctrl / ⌘ + Enter`, multiple statements split into separate result sets, row count and timing, query history.
+- **Table data browsing and editing** — paging, sorting, `WHERE` filters, double-click a cell to edit, insert and delete rows. All changes are committed in a single transaction.
+- **Export** — export a result set or a whole table as CSV (UTF-8 BOM, opens straight in Excel) or JSON; large tables are streamed in chunks.
+- **Safe mode** — blocks `UPDATE / DELETE / DROP / TRUNCATE` without a `WHERE` clause until you confirm. Can be turned off per connection.
 
-- Node.js 20 以上（开发用 Node 24 验证）
-- 目标数据库：MySQL 5.7+/8.x 或 PostgreSQL 10+
+## Requirements
 
-## 快速开始（浏览器里用）
+- Node.js 20 or newer (developed against Node 24)
+- A target database: MySQL 5.7+/8.x or PostgreSQL 10+
+
+## Quick start (run in the browser)
 
 ```bash
 npm install
@@ -25,81 +27,85 @@ npm run build
 npm start
 ```
 
-然后打开 http://127.0.0.1:4173 。
+Then open http://127.0.0.1:4173 .
 
-## 开发模式
+## Development mode
 
 ```bash
-npm run dev          # 后端 4173 热重启 + 前端 5173 热更新
+npm run dev          # API on 4173 with hot restart + UI on 5173 with hot reload
 ```
 
-前端访问 http://127.0.0.1:5173 ，`/api` 会代理到后端。
+Open http://127.0.0.1:5173 ; `/api` is proxied to the API server.
 
-## 桌面客户端
+## Desktop client
 
 ```bash
-npm run desktop      # 构建后用 Electron 打开
-npm run dist         # 打包出安装包与免安装版，产物在 release/
+npm run desktop      # build, then open the Electron app
+npm run dist         # package an installer and a portable build into release/
 ```
 
-`npm run dist` 会生成：
+`npm run dist` produces:
 
-- `DB Tool-0.1.0-setup.exe`：NSIS 安装包，可自选安装目录、创建桌面快捷方式
-- `DB Tool-0.1.0-portable.exe`：免安装单文件
+- `DB Tool-0.1.0-setup.exe` — NSIS installer, lets you pick the install directory and creates a desktop shortcut
+- `DB Tool-0.1.0-portable.exe` — single portable executable
 
-桌面版启动时会在本机随机端口拉起一个只监听 `127.0.0.1` 的服务，并带一次性访问令牌；数据目录固定在系统用户数据目录，与开发模式互不影响。
+On launch the desktop build starts a local service that only listens on `127.0.0.1` (on a free port) and requires a one-time access token. Its data directory lives in the OS user data folder, independent from development mode.
 
-### 关于未签名安装包
+### Unsigned installers
 
-打包产物是**未签名**的。如果运行构建的机器启用了 Smart App Control（`设置 → 隐私和安全性 →
-Windows 安全中心 → 应用和浏览器控制 → 智能应用控制`），Windows 会直接拦截这两个 exe，报
-`An Application Control policy has blocked this file`。可选的出路：
+The packaged builds are **unsigned**. If the machine that runs them has Smart App Control enabled
+(`Settings → Privacy & security → Windows Security → App & browser control → Smart App Control`),
+Windows blocks both executables with `An Application Control policy has blocked this file`. Options:
 
-- 给构建产物做代码签名（electron-builder 的 `win.certificateFile` / `win.certificatePassword`）；
-- 或者直接用 `release/win-unpacked/` 里的解包目录，主程序继承了 Electron 的已知信誉，通常不会被拦；
-- 关闭 Smart App Control 要谨慎：一旦关闭，只能通过重装系统才能重新打开。
+- sign the artifacts (electron-builder's `win.certificateFile` / `win.certificatePassword`);
+- or use the unpacked build in `release/win-unpacked/` — the main binary inherits Electron's known reputation and usually is not blocked;
+- turning Smart App Control off is a one-way move: once disabled, only a Windows reset can re-enable it.
 
-这个策略是按机器生效的，在没启用该策略的机器上安装包可以直接双击运行。
+The policy applies per machine, so these installers run by double-clicking on machines that do not enable it.
 
-## 自检
+## Self-checks
 
 ```bash
-# 接口层端到端（需要一个可连的 MySQL）
-SMOKE_MYSQL_PASSWORD=你的密码 npm run smoke
+# API end to end (needs a reachable MySQL)
+SMOKE_MYSQL_PASSWORD=your-password npm run smoke
 
-# 桌面界面端到端（真实点击、真实执行 SQL）
+# Desktop UI end to end (real clicks, real SQL)
 node_modules/.bin/electron . --remote-debugging-port=9222
-SMOKE_MYSQL_PASSWORD=你的密码 node scripts/desktop-e2e.mjs
+SMOKE_MYSQL_PASSWORD=your-password node scripts/desktop-e2e.mjs
 ```
 
-脚本里的连接名固定为 `自检连接 MySQL`，跑完会自动清理，不会留下垃圾连接。
+Both scripts create a temporary connection named `自检连接 MySQL`, then delete it when they finish, so no stray connections are left behind.
 
-## 目录结构
+## Project layout
 
 ```
-server/   本地 API：连接管理、SQL 执行、表结构读取、行编辑、导出
-web/      React 界面：侧边栏、SQL 编辑器、数据表格（虚拟滚动）
-electron/ 桌面外壳：负责拉起本地服务并打开窗口
-scripts/  自检脚本与图标生成
-build/    打包用图标资源
+server/   local API: connections, SQL execution, schema reads, row edits, export
+web/      React UI: sidebar, SQL editor, data grid (virtual scrolling)
+electron/ desktop shell: starts the local service and opens the window
+scripts/  self-check scripts and icon generation
+build/    icon assets used when packaging
 ```
 
-## 数据与安全
+## Data and security
 
-- 保存的连接在 `<用户数据目录>/connections.json`，密码字段用 AES-256-GCM 加密，密钥是同目录下的 `secret.key`。
-  **请勿把 `data/` 或 `secret.key` 提交到版本库或分享出去。**
-- 服务只绑定 `127.0.0.1`，局域网内其他机器访问不到。
-- 连接信息与查询历史都不出本机，没有任何遥测。
+- Saved connections live in `<user data dir>/connections.json`. Password fields are encrypted with AES-256-GCM using `secret.key` in the same directory.
+  **Never commit or share `data/` or `secret.key`.**
+- The service binds to `127.0.0.1` only, so other machines on the network cannot reach it.
+- Connection details and query history never leave your machine. No telemetry.
 
-## 构建脚本
+## Scripts
 
-| 命令 | 说明 |
+| Command | What it does |
 | --- | --- |
-| `npm run dev` | 前后端开发模式 |
-| `npm run build` | 编译后端 + 打包前端 |
-| `npm start` | 启动已编译的服务（同时托管前端） |
-| `npm run desktop` | 构建并启动桌面应用 |
-| `npm run dist` | 生成 Windows 安装包 / 免安装版 |
-| `npm run typecheck` | 前后端类型检查 |
-| `npm run smoke` | 接口端到端自检 |
-| `npm run icon` | 重新生成应用图标 |
+| `npm run dev` | API and UI in development mode |
+| `npm run build` | Compile the API and bundle the UI |
+| `npm start` | Run the compiled service (also serves the UI) |
+| `npm run desktop` | Build and launch the desktop app |
+| `npm run dist` | Build the Windows installer / portable build |
+| `npm run typecheck` | Type-check the API and the UI |
+| `npm run smoke` | API end-to-end self-check |
+| `npm run icon` | Regenerate the app icon |
+
+---
+
+Adding a translation? Copy `README.md`, translate it, then add a link to the switcher line at the top of every README.
