@@ -17,23 +17,40 @@ const DEFAULT_USERS: Record<DbKind, string> = { mysql: 'root', postgres: 'postgr
 
 type FieldKey = 'name' | 'host' | 'port' | 'user';
 
+const KIND_LABELS: Record<DbKind, string> = { mysql: 'MySQL', postgres: 'PostgreSQL' };
+
+/** Pre-fills a readable name so the field is never blank for a new connection. */
+function suggestName(kind: DbKind, host: string): string {
+  const label = KIND_LABELS[kind];
+  const address = host.trim();
+  if (!address) return label;
+  if (/^(127\.0\.0\.1|localhost|::1)$/i.test(address)) return `本地 ${label}`;
+  return `${address} ${label}`;
+}
+
 export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNotify }: Props) {
   const isNew = connection === null;
-  const [draft, setDraft] = useState<ConnectionDraft & { password: string }>({
-    name: connection?.name ?? '',
-    kind: connection?.kind ?? 'mysql',
-    host: connection?.host ?? '127.0.0.1',
-    port: connection?.port ?? 3306,
-    user: connection?.user ?? 'root',
-    password: '',
-    database: connection?.database ?? '',
-    ssl: connection?.ssl ?? false,
-    safeMode: connection?.safeMode ?? true,
+  const [draft, setDraft] = useState<ConnectionDraft & { password: string }>(() => {
+    const kind = connection?.kind ?? 'mysql';
+    const host = connection?.host ?? '127.0.0.1';
+    return {
+      name: connection?.name ?? suggestName(kind, host),
+      kind,
+      host,
+      port: connection?.port ?? DEFAULT_PORTS[kind],
+      user: connection?.user ?? DEFAULT_USERS[kind],
+      password: '',
+      database: connection?.database ?? '',
+      ssl: connection?.ssl ?? false,
+      safeMode: connection?.safeMode ?? true,
+    };
   });
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
+  /** Once the name is edited by hand it stops tracking the suggested value. */
+  const nameTouched = useRef(!isNew);
 
   const refs = {
     name: useRef<HTMLInputElement>(null),
@@ -53,6 +70,15 @@ export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNo
 
   const inputClass = (key: FieldKey) => (errors[key] ? 'input input--invalid' : 'input');
 
+  function clearError(key: FieldKey) {
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
   /**
    * Switching engine resets the port, and follows the login name over only when
    * the field still holds the previous engine's default, so a typed value survives.
@@ -62,11 +88,27 @@ export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNo
       ...current,
       kind: next,
       port: DEFAULT_PORTS[next],
+      name: nameTouched.current ? current.name : suggestName(next, current.host),
       user: current.user.trim() === '' || current.user.trim() === DEFAULT_USERS[current.kind]
         ? DEFAULT_USERS[next]
         : current.user,
     }));
     setErrors({});
+  }
+
+  function changeHost(next: string) {
+    setDraft((current) => ({
+      ...current,
+      host: next,
+      name: nameTouched.current ? current.name : suggestName(current.kind, next),
+    }));
+    clearError('host');
+  }
+
+  function changeName(next: string) {
+    nameTouched.current = true;
+    setDraft((current) => ({ ...current, name: next }));
+    clearError('name');
   }
 
   function validate(includeName: boolean): Partial<Record<FieldKey, string>> {
@@ -193,8 +235,8 @@ export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNo
             ref={refs.name}
             className={inputClass('name')}
             value={draft.name}
-            placeholder="例如：本地 MySQL"
-            onChange={(event) => patch({ name: event.target.value })}
+            placeholder="给这个连接起个名字"
+            onChange={(event) => changeName(event.target.value)}
           />
           {errors.name && <div className="field-error">{errors.name}</div>}
         </div>
@@ -222,7 +264,7 @@ export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNo
             ref={refs.host}
             className={inputClass('host')}
             value={draft.host}
-            onChange={(event) => patch({ host: event.target.value })}
+            onChange={(event) => changeHost(event.target.value)}
           />
           {errors.host && <div className="field-error">{errors.host}</div>}
         </div>

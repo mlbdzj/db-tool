@@ -407,6 +407,11 @@ async function main() {
     return Boolean(button);
   })()`);
   check('对话框已打开', Boolean(await waitFor("Boolean(document.querySelector('.overlay #conn-name'))")));
+  check(
+    '新建时连接名称已预填',
+    (await evaluate("document.querySelector('.overlay #conn-name').value")) === '本地 MySQL',
+    await evaluate("document.querySelector('.overlay #conn-name').value"),
+  );
 
   await pickOption('.overlay #conn-kind', 'postgres');
   await sleep(250);
@@ -420,14 +425,25 @@ async function main() {
     (await evaluate("document.querySelector('.overlay #conn-port').value")) === '5432',
     await evaluate("document.querySelector('.overlay #conn-port').value"),
   );
+  check(
+    '名称跟着类型变为 本地 PostgreSQL',
+    (await evaluate("document.querySelector('.overlay #conn-name').value")) === '本地 PostgreSQL',
+    await evaluate("document.querySelector('.overlay #conn-name').value"),
+  );
 
   await setField('#conn-user', 'dba');
+  await setField('#conn-name', '生产库');
   await pickOption('.overlay #conn-kind', 'mysql');
   await sleep(250);
   check(
     '手填的用户名不会被切换覆盖',
     (await evaluate("document.querySelector('.overlay #conn-user').value")) === 'dba',
     await evaluate("document.querySelector('.overlay #conn-user').value"),
+  );
+  check(
+    '手填的名称不会被切换覆盖',
+    (await evaluate("document.querySelector('.overlay #conn-name').value")) === '生产库',
+    await evaluate("document.querySelector('.overlay #conn-name').value"),
   );
   check(
     '端口随类型回到 3306',
