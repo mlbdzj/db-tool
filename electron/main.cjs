@@ -8,6 +8,7 @@ const DEV_URL = process.env.DB_TOOL_DEV_URL ?? '';
 
 let serverProcess = null;
 let mainWindow = null;
+let serverStderr = '';
 
 function serverEntry() {
   return path.join(__dirname, '..', 'server', 'dist', 'index.js');
@@ -20,7 +21,10 @@ function serverEntry() {
 function startServer() {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [serverEntry()], {
-      cwd: path.join(__dirname, '..'),
+      // Never point cwd at the app directory: when packaged it lives inside
+      // app.asar, which is an archive rather than a real directory, and the
+      // child process would fail to start.
+      cwd: app.getPath('userData'),
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
@@ -47,14 +51,18 @@ function startServer() {
         reject(error);
       }
     });
-    child.stderr.on('data', (chunk) => process.stderr.write(chunk));
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      serverStderr = `${serverStderr}${text}`.split('\n').slice(-8).join('\n');
+      process.stderr.write(text);
+    });
     child.on('error', (error) => {
       clearTimeout(timeout);
       reject(error);
     });
     child.on('exit', (code) => {
       clearTimeout(timeout);
-      reject(new Error(`本地服务已退出（代码 ${code}）`));
+      reject(new Error(`本地服务已退出（代码 ${code}）${serverStderr ? `\n\n${serverStderr}` : ''}`));
     });
   });
 }

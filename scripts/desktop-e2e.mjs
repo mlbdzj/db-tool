@@ -107,6 +107,10 @@ async function main() {
   // Synthetic input only reaches the renderer reliably while its window is the
   // active one, so claim focus before driving clicks and keystrokes.
   await client.send('Page.bringToFront');
+  // When the app window sits behind other windows, the renderer refuses to
+  // take focus and silently drops dispatched input. Focus emulation makes the
+  // page behave as if it were frontmost, which is what automation needs.
+  await client.send('Emulation.setFocusEmulationEnabled', { enabled: true });
 
   async function evaluate(expression) {
     const result = await client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });

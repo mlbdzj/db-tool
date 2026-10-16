@@ -49,6 +49,18 @@ npm run dist         # 打包出安装包与免安装版，产物在 release/
 
 桌面版启动时会在本机随机端口拉起一个只监听 `127.0.0.1` 的服务，并带一次性访问令牌；数据目录固定在系统用户数据目录，与开发模式互不影响。
 
+### 关于未签名安装包
+
+打包产物是**未签名**的。如果运行构建的机器启用了 Smart App Control（`设置 → 隐私和安全性 →
+Windows 安全中心 → 应用和浏览器控制 → 智能应用控制`），Windows 会直接拦截这两个 exe，报
+`An Application Control policy has blocked this file`。可选的出路：
+
+- 给构建产物做代码签名（electron-builder 的 `win.certificateFile` / `win.certificatePassword`）；
+- 或者直接用 `release/win-unpacked/` 里的解包目录，主程序继承了 Electron 的已知信誉，通常不会被拦；
+- 关闭 Smart App Control 要谨慎：一旦关闭，只能通过重装系统才能重新打开。
+
+这个策略是按机器生效的，在没启用该策略的机器上安装包可以直接双击运行。
+
 ## 自检
 
 ```bash
