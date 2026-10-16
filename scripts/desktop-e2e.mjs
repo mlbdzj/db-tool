@@ -175,6 +175,27 @@ async function main() {
     })()`);
   }
 
+  /** React tracks input values internally, so write through the native setter. */
+  async function setField(selector, value) {
+    return evaluate(`(() => {
+      const input = document.querySelector(${JSON.stringify(selector)});
+      if (!input) return false;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+  }
+
+  async function pickOption(selector, value) {
+    return evaluate(`(() => {
+      const select = document.querySelector(${JSON.stringify(selector)});
+      if (!select) return false;
+      select.value = ${JSON.stringify(value)};
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+  }
+
   console.log('启动状态');
   const title = await evaluate('document.title');
   check('页面标题正确', title.includes('DB Tool'), title);
@@ -187,7 +208,11 @@ async function main() {
   if (existingConnections === 0) {
     check('未连接时显示引导', bodyText.includes('先连接一个数据库'));
   } else {
-    check('已有连接时直接进入工作区', !bodyText.includes('先连接一个数据库'), existingConnections);
+    check(
+      '启动时列出已保存的连接',
+      await evaluate("[...document.querySelectorAll('.conn')].every((node) => node.innerText.trim().length > 0)"),
+      existingConnections,
+    );
   }
 
   console.log('\n准备一个连接');
@@ -213,10 +238,15 @@ async function main() {
   await sleep(1200);
 
   console.log('\n侧边栏交互');
-  check('连接出现在侧边栏', (await waitFor("document.querySelectorAll('.conn').length")) === 1);
+  const seedRowVisible = `[...document.querySelectorAll('.conn')].some((node) => node.innerText.includes(${JSON.stringify(SEED_NAME)}))`;
+  check('连接出现在侧边栏', Boolean(await waitFor(seedRowVisible)));
   check('连接名称中文正常', (await evaluate('document.body.innerText')).includes(SEED_NAME));
 
-  await evaluate("document.querySelector('.conn').click()");
+  await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.conn')].find((node) => node.innerText.includes(${JSON.stringify(SEED_NAME)}));
+    if (row) row.click();
+    return Boolean(row);
+  })()`);
   const database = await waitFor(
     "[...document.querySelectorAll('.sidebar__scroll .tree__row')].map((row) => row.innerText.trim()).find((label) => label === 'db_tool_selftest')",
   );
@@ -368,6 +398,66 @@ async function main() {
 
   console.log('\n控制台');
   check('渲染进程没有报错', consoleErrors.length === 0, consoleErrors.slice(0, 5));
+
+  console.log('\n新建连接对话框');
+  await evaluate(`(() => {
+    const button = [...document.querySelectorAll('.sidebar__head button')]
+      .find((node) => node.getAttribute('title') === '新建连接');
+    if (button) button.click();
+    return Boolean(button);
+  })()`);
+  check('对话框已打开', Boolean(await waitFor("Boolean(document.querySelector('.overlay #conn-name'))")));
+
+  await pickOption('.overlay #conn-kind', 'postgres');
+  await sleep(250);
+  check(
+    '切到 PostgreSQL 后用户名建议为 postgres',
+    (await evaluate("document.querySelector('.overlay #conn-user').value")) === 'postgres',
+    await evaluate("document.querySelector('.overlay #conn-user').value"),
+  );
+  check(
+    '端口同步为 5432',
+    (await evaluate("document.querySelector('.overlay #conn-port').value")) === '5432',
+    await evaluate("document.querySelector('.overlay #conn-port').value"),
+  );
+
+  await setField('#conn-user', 'dba');
+  await pickOption('.overlay #conn-kind', 'mysql');
+  await sleep(250);
+  check(
+    '手填的用户名不会被切换覆盖',
+    (await evaluate("document.querySelector('.overlay #conn-user').value")) === 'dba',
+    await evaluate("document.querySelector('.overlay #conn-user').value"),
+  );
+  check(
+    '端口随类型回到 3306',
+    (await evaluate("document.querySelector('.overlay #conn-port').value")) === '3306',
+    await evaluate("document.querySelector('.overlay #conn-port').value"),
+  );
+
+  await setField('#conn-name', '');
+  await evaluate(`(() => {
+    const button = [...document.querySelectorAll('.overlay .modal__foot button')]
+      .find((node) => node.innerText.trim() === '保存');
+    if (button) button.click();
+    return Boolean(button);
+  })()`);
+  await sleep(700);
+  check(
+    '名称为空时在字段下方提示',
+    (await evaluate(`(() => { const node = document.querySelector('.overlay .field-error'); return node ? node.innerText.trim() : null; })()`)) ===
+      '连接名称不能为空',
+    await evaluate(`(() => { const node = document.querySelector('.overlay .field-error'); return node ? node.innerText.trim() : null; })()`),
+  );
+  check(
+    '没有把空名称提交到服务端',
+    (await evaluate("Boolean(document.querySelector('.overlay .panel-message--error'))")) === false,
+  );
+  check('焦点落到出错的字段', (await evaluate('document.activeElement.id')) === 'conn-name', await evaluate('document.activeElement.id'));
+  check('对话框保持打开', await evaluate("Boolean(document.querySelector('.overlay'))"));
+
+  await evaluate("document.querySelector('.overlay .modal__head button').click()");
+  check('对话框可以关闭', Boolean(await waitFor("!document.querySelector('.overlay')", 3000)));
 
   console.log('\n清理');
   const cleaned = await evaluate(`(async () => {
