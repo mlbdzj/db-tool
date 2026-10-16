@@ -27,15 +27,18 @@ npm run build
 npm start
 ```
 
-Then open http://127.0.0.1:4173 .
+Then open http://127.0.0.1:3000 .
 
 ## Development mode
 
 ```bash
-npm run dev          # API on 4173 with hot restart + UI on 5173 with hot reload
+npm run dev          # API on 3000 with hot restart + UI on 5173 with hot reload
 ```
 
 Open http://127.0.0.1:5173 ; `/api` is proxied to the API server.
+
+The API port comes from `DB_TOOL_PORT` (default `3000`; use `0` to let the OS pick a free port).
+The dev server proxies to `DB_TOOL_API` (default `http://127.0.0.1:3000`).
 
 ## Desktop client
 
@@ -49,7 +52,7 @@ npm run dist         # package an installer and a portable build into release/
 - `DB Tool-0.1.0-setup.exe` — NSIS installer, lets you pick the install directory and creates a desktop shortcut
 - `DB Tool-0.1.0-portable.exe` — single portable executable
 
-On launch the desktop build starts a local service that only listens on `127.0.0.1` (on a free port) and requires a one-time access token. Its data directory lives in the OS user data folder, independent from development mode.
+On launch the desktop build starts a local service on an OS-assigned free port that only listens on `127.0.0.1`, and requires a one-time access token. Its data directory lives in the OS user data folder, independent from development mode.
 
 ### Unsigned installers
 

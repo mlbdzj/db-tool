@@ -9,7 +9,7 @@
  *   SMOKE_MYSQL_PASSWORD=... node scripts/smoke-test.mjs
  */
 
-const BASE = process.argv[2] ?? 'http://127.0.0.1:4173/api';
+const BASE = process.argv[2] ?? 'http://127.0.0.1:3000/api';
 const MYSQL = {
   name: '自检连接 MySQL',
   kind: 'mysql',

@@ -21,7 +21,13 @@ export const historyFile = join(dataDir, 'query-history.json');
 export const secretKeyFile = join(dataDir, 'secret.key');
 
 export const host = process.env.DB_TOOL_HOST ?? '127.0.0.1';
-export const preferredPort = Number(process.env.DB_TOOL_PORT ?? 4173) || 4173;
+/**
+ * 3000 is the conventional default for a Node service. `0` is honoured and asks
+ * the operating system for a free port, which is what the desktop shell uses.
+ */
+const requestedPort = Number(process.env.DB_TOOL_PORT ?? 3000);
+export const preferredPort =
+  Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort <= 65535 ? requestedPort : 3000;
 /** When set, every /api call must carry this token. Used by the desktop shell. */
 export const authToken = process.env.DB_TOOL_TOKEN ?? '';
 export const webDistDir = resolve(projectRoot, 'web', 'dist');

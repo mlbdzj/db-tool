@@ -61,6 +61,8 @@ export function createApp(): express.Express {
 export async function startServer(): Promise<RunningServer> {
   const app = createApp();
   let port = preferredPort;
+  /** With an OS-assigned port there is nothing to walk forward from. */
+  const canIncrement = preferredPort !== 0;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < 25; attempt++) {
@@ -86,7 +88,7 @@ export async function startServer(): Promise<RunningServer> {
         },
       };
     }
-    port += 1;
+    if (canIncrement) port += 1;
   }
 
   throw lastError instanceof Error ? lastError : new Error('无法启动本地服务');
@@ -97,6 +99,7 @@ if (invoked === import.meta.url) {
   startServer()
     .then((server) => {
       process.stdout.write(`__DB_TOOL_READY__${JSON.stringify({ port: server.port, url: server.url })}\n`);
+      console.log(`DB Tool is running at ${server.url}`);
     })
     .catch((error) => {
       console.error('server failed to start:', error);

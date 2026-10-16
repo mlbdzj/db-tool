@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const apiTarget = process.env.DB_TOOL_API ?? 'http://127.0.0.1:4173';
+const apiTarget = process.env.DB_TOOL_API ?? 'http://127.0.0.1:3000';
 
 export default defineConfig({
   plugins: [react()],

@@ -28,7 +28,9 @@ function startServer() {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        DB_TOOL_PORT: process.env.DB_TOOL_PORT ?? '4173',
+        // 0 lets the OS hand out a free port, so the desktop app can never
+        // collide with whatever else is running on this machine.
+        DB_TOOL_PORT: process.env.DB_TOOL_PORT ?? '0',
         DB_TOOL_TOKEN: AUTH_TOKEN,
         DB_TOOL_DATA_DIR: app.getPath('userData'),
       },
