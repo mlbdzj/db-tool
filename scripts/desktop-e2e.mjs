@@ -196,6 +196,17 @@ async function main() {
     })()`);
   }
 
+  async function clickConnection(name) {
+    return evaluate(`(() => {
+      const row = [...document.querySelectorAll('.conn')].find((node) => node.innerText.includes(${JSON.stringify(name)}));
+      if (!row) return false;
+      row.click();
+      return true;
+    })()`);
+  }
+
+  const statusText = () => evaluate("document.querySelector('.statusbar') ? document.querySelector('.statusbar').innerText : ''");
+
   /** React tracks input values internally, so write through the native setter. */
   async function setField(selector, value) {
     return evaluate(`(() => {
@@ -746,6 +757,44 @@ async function main() {
     ),
   );
 
+  console.log('\n切换连接不串库');
+  const secondName = '自检连接 B';
+  const secondBody = JSON.stringify({ ...MYSQL, name: secondName, database: 'hotel_booking' });
+  const createdSecond = await evaluate(`(async () => {
+    const token = localStorage.getItem('db-tool-token') ?? '';
+    const headers = { 'content-type': 'application/json', 'x-db-tool-token': token };
+    const response = await fetch('/api/connections', {
+      method: 'POST',
+      headers,
+      body: ${JSON.stringify(secondBody)},
+    });
+    return response.status;
+  })()`);
+  check('创建第二个连接', createdSecond === 201, createdSecond);
+
+  await client.send('Page.reload');
+  await sleep(1500);
+
+  await clickConnection(SEED_NAME);
+  await waitFor("Boolean(document.querySelector('.sidebar__scroll .tree__row'))", 8000);
+  await clickByText('db_tool_selftest');
+  check(
+    '连接 A 选中 db_tool_selftest',
+    (await statusText()).includes('库 db_tool_selftest'),
+    await statusText(),
+  );
+
+  await clickConnection(secondName);
+  check(
+    '切到连接 B 后使用 B 自己的库',
+    Boolean(await waitFor(`(document.querySelector('.statusbar') ? document.querySelector('.statusbar').innerText : '').includes('库 hotel_booking')`, 8000)),
+    await statusText(),
+  );
+  check(
+    '切换过程中没有冒出库不存在错误',
+    !(await evaluate("document.body.innerText.includes('默认数据库不存在')")),
+  );
+
   console.log('\n清理');
   const cleaned = await evaluate(`(async () => {
     const token = localStorage.getItem('db-tool-token') ?? '';
@@ -753,14 +802,14 @@ async function main() {
     const list = await (await fetch('/api/connections', { headers })).json();
     let removed = 0;
     for (const connection of list.connections ?? []) {
-      if (connection.name !== ${JSON.stringify(SEED_NAME)}) continue;
+      if (![${JSON.stringify(SEED_NAME)}, ${JSON.stringify(secondName)}].includes(connection.name)) continue;
       await fetch('/api/connections/' + connection.id + '/history', { method: 'DELETE', headers });
       await fetch('/api/connections/' + connection.id, { method: 'DELETE', headers });
       removed += 1;
     }
     return removed;
   })()`);
-  check('自检连接已清理', cleaned >= 1, cleaned);
+  check('自检连接已清理', cleaned >= 2, cleaned);
 
   client.close();
   console.log(`\n${passed} passed, ${failed} failed`);

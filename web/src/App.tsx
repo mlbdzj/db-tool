@@ -22,19 +22,13 @@ function nextTabId(prefix: string): string {
   return `${prefix}-${tabSequence}`;
 }
 
-const LAST_VIEW_KEY = 'db-tool-last-view';
+const LAST_CONNECTION_KEY = 'db-tool-last-connection';
+/** The selected database is remembered per connection: names rarely overlap. */
+const dbMemoryKey = (connectionId: string) => `db-tool-last-db:${connectionId}`;
 
-interface LastView {
-  connectionId: string;
-  db: string | null;
-}
-
-function readLastView(): LastView | null {
+function readLastConnectionId(): string | null {
   try {
-    const raw = localStorage.getItem(LAST_VIEW_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as LastView;
-    return typeof parsed?.connectionId === 'string' ? parsed : null;
+    return localStorage.getItem(LAST_CONNECTION_KEY);
   } catch {
     return null;
   }
@@ -106,10 +100,9 @@ export function App() {
       .then((result) => {
         setConnections(result.connections);
         setConnectionsLoaded(true);
-        const stored = readLastView();
-        if (stored && result.connections.some((entry) => entry.id === stored.connectionId)) {
-          setActiveConnectionId(stored.connectionId);
-          if (stored.db) setActiveDb(stored.db);
+        const stored = readLastConnectionId();
+        if (stored && result.connections.some((entry) => entry.id === stored)) {
+          setActiveConnectionId(stored);
         }
       })
       .catch((error: unknown) => notify(error instanceof Error ? error.message : String(error), 'error'));
@@ -118,11 +111,25 @@ export function App() {
   useEffect(() => {
     if (!activeConnectionId) return;
     try {
-      localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ connectionId: activeConnectionId, db: activeDb }));
+      localStorage.setItem(LAST_CONNECTION_KEY, activeConnectionId);
     } catch {
       /* storage may be unavailable */
     }
-  }, [activeConnectionId, activeDb]);
+  }, [activeConnectionId]);
+
+  /** Remember a database only after it is known to belong to the active connection. */
+  const selectDatabase = useCallback(
+    (db: string) => {
+      setActiveDb(db);
+      if (!activeConnectionId) return;
+      try {
+        localStorage.setItem(dbMemoryKey(activeConnectionId), db);
+      } catch {
+        /* storage may be unavailable */
+      }
+    },
+    [activeConnectionId],
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -153,13 +160,29 @@ export function App() {
       try {
         const result = await api.listDatabases(connection.id);
         setDatabases(result.databases);
-        setActiveDb((current) => {
-          if (current && result.databases.some((database) => database.name === current)) return current;
-          if (connection.database && result.databases.some((database) => database.name === connection.database)) {
-            return connection.database;
+        let remembered: string | null = null;
+        try {
+          remembered = localStorage.getItem(dbMemoryKey(connection.id));
+        } catch {
+          remembered = null;
+        }
+        const exists = (name: string | null | undefined) =>
+          Boolean(name) && result.databases.some((database) => database.name === name);
+        // Prefer this connection's remembered database, then its configured
+        // default, then the first non-system database.
+        const chosen =
+          [remembered, connection.database].find(exists) ??
+          result.databases.find((database) => !database.system)?.name ??
+          result.databases[0]?.name ??
+          null;
+        setActiveDb(chosen);
+        if (chosen) {
+          try {
+            localStorage.setItem(dbMemoryKey(connection.id), chosen);
+          } catch {
+            /* storage may be unavailable */
           }
-          return result.databases.find((database) => !database.system)?.name ?? result.databases[0]?.name ?? null;
-        });
+        }
       } catch (error) {
         setDatabases([]);
         setActiveDb(null);
@@ -170,11 +193,13 @@ export function App() {
   );
 
   useEffect(() => {
+    // Drop the previous connection's database first: leaving it in place sends
+    // requests for a database that may not exist on the server we just switched
+    // to, which surfaces as a confusing "database does not exist" error.
+    setActiveDb(null);
+    setDatabases([]);
+    setTables([]);
     if (activeConnection) void loadDatabases(activeConnection);
-    else {
-      setDatabases([]);
-      setActiveDb(null);
-    }
   }, [activeConnection, loadDatabases]);
 
   const loadTables = useCallback(async () => {
@@ -332,7 +357,7 @@ export function App() {
         onEditConnection={(connection) => setDialog({ connection })}
         databases={databases}
         activeDb={activeDb}
-        onSelectDb={setActiveDb}
+        onSelectDb={selectDatabase}
         tables={tables}
         tablesLoading={tablesLoading}
         onOpenTable={(table) => activeConnection && openTableTab(activeConnection, activeDb, table)}
