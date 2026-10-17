@@ -237,6 +237,27 @@ async function main() {
   const history = await call('GET', `/connections/${id}/history`);
   check('query history recorded', (history.body?.entries ?? []).length > 0, history.body?.entries?.length);
 
+  section('默认库失效');
+  const stale = await call('POST', '/connections', { ...MYSQL, name: '自检默认库失效', database: 'postgres' });
+  const staleId = stale.body?.connection?.id;
+  check('connection with a stale default database is created', Boolean(staleId), stale.body);
+  if (staleId) {
+    const databases = await call('GET', `/connections/${staleId}/databases`);
+    check(
+      'stale default database does not hide the database list',
+      databases.status === 200 && (databases.body?.databases ?? []).length > 0,
+      databases.body,
+    );
+    const failed = await call('POST', `/connections/${staleId}/query`, { db: null, sql: 'SELECT 1' });
+    check(
+      'error explains the default database is missing',
+      failed.status === 400 && /默认数据库不存在/.test(failed.body?.error ?? ''),
+      failed.body,
+    );
+    check('error text is not mojibake', !/\uFFFD/.test(failed.body?.error ?? ''), failed.body?.error);
+    await call('DELETE', `/connections/${staleId}`);
+  }
+
   section('清理');
   const cleaned = await call('DELETE', `/connections/${id}`);
   check('connection removed', cleaned.status === 200 && cleaned.body?.removed === true, cleaned.body);

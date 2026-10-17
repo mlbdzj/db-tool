@@ -112,7 +112,9 @@ export function createMysqlDriver(conn: ConnectionRecord): Driver {
     },
 
     async listDatabases(): Promise<DatabaseInfo[]> {
-      const [rows] = await poolFor(null).query('SHOW DATABASES');
+      // Connect without a default database: a stale default must not hide the
+      // list the user needs in order to fix it.
+      const [rows] = await poolFor('').query('SHOW DATABASES');
       return (rows as unknown as unknown[][]).map((row) => {
         const name = String(row[0]);
         return { name, system: SYSTEM_DATABASES.has(name.toLowerCase()) };

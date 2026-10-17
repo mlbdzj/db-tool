@@ -624,6 +624,7 @@ async function main() {
     await evaluate("document.querySelector('.overlay #conn-name').value"),
   );
 
+  await setField('#conn-database', 'db_tool_selftest');
   await pickOption('.overlay #conn-kind', 'postgres');
   await sleep(250);
   check(
@@ -640,6 +641,11 @@ async function main() {
     '名称跟着类型变为 本地 PostgreSQL',
     (await evaluate("document.querySelector('.overlay #conn-name').value")) === '本地 PostgreSQL',
     await evaluate("document.querySelector('.overlay #conn-name').value"),
+  );
+  check(
+    '切换类型会清空默认数据库',
+    (await evaluate("document.querySelector('.overlay #conn-database').value")) === '',
+    await evaluate("document.querySelector('.overlay #conn-database').value"),
   );
 
   await setField('#conn-user', 'dba');

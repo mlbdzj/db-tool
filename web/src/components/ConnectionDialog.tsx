@@ -88,6 +88,9 @@ export function ConnectionDialog({ connection, onClose, onSaved, onDeleted, onNo
       ...current,
       kind: next,
       port: DEFAULT_PORTS[next],
+      // Database names never carry across engines: keeping the old one makes
+      // every request fail with "unknown database".
+      database: current.kind === next ? current.database : '',
       name: nameTouched.current ? current.name : suggestName(next, current.host),
       user: current.user.trim() === '' || current.user.trim() === DEFAULT_USERS[current.kind]
         ? DEFAULT_USERS[next]

@@ -53,19 +53,36 @@ export interface ApiErrorBody {
 
 export function describeError(error: unknown): ApiErrorBody {
   const source = (error ?? {}) as Record<string, unknown>;
-  const message =
+  const rawMessage =
     (typeof source.sqlMessage === 'string' && source.sqlMessage) ||
     (error instanceof Error && error.message) ||
     (typeof source.message === 'string' && source.message) ||
     String(error);
+  const code = typeof source.code === 'string' ? source.code : null;
+  const errno = typeof source.errno === 'number' ? source.errno : null;
+
+  // MySQL 1049 / PostgreSQL 3D000 mean the configured default database is gone.
+  // The driver text is not actionable (and MySQL may localise it), so say what
+  // to do instead of echoing it.
+  const missingDatabase = errno === 1049 || code === '3D000';
+  // A server whose message catalog is not the connection charset returns bytes
+  // that decode into replacement characters; show an honest fallback.
+  const undecodable = /\uFFFD{2,}/.test(rawMessage);
+
+  const message = missingDatabase
+    ? '默认数据库不存在：请在连接设置里清空「默认数据库」，或改成该服务器上已有的库'
+    : undecodable
+      ? `数据库返回了无法解码的错误信息（错误码 ${errno ?? code ?? '未知'}），请检查连接设置`
+      : rawMessage;
+
   return {
     error: message,
-    code: typeof source.code === 'string' ? source.code : null,
+    code,
     detail: typeof source.detail === 'string' ? source.detail : null,
     hint: typeof source.hint === 'string' ? source.hint : null,
     position: typeof source.position === 'number' ? source.position : null,
     sqlState: typeof source.sqlState === 'string' ? source.sqlState : null,
-    errno: typeof source.errno === 'number' ? source.errno : null,
+    errno,
   };
 }
 

@@ -144,9 +144,21 @@ export function createPostgresDriver(conn: ConnectionRecord): Driver {
     },
 
     async listDatabases(): Promise<DatabaseInfo[]> {
-      const result = await poolFor(null).query(
-        `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY datname`,
-      );
+      const query = (db: string | null) =>
+        poolFor(db).query(`SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY datname`);
+
+      let result;
+      try {
+        result = await query(null);
+      } catch (error) {
+        // A stale default database should not hide the list either; fall back to
+        // the maintenance database every PostgreSQL install ships with.
+        const configured = conn.database ?? '';
+        const missing = (error as { code?: string }).code === '3D000';
+        if (!missing || !configured || configured === 'postgres') throw error;
+        result = await query('postgres');
+      }
+
       return result.rows.map((row: { datname: string }) => ({
         name: row.datname,
         system: row.datname === 'postgres',
