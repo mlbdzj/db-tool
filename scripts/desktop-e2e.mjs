@@ -404,6 +404,47 @@ async function main() {
   const secondCursorRow = await evaluate(cursorRow);
   check('方向键移动单元格光标', secondCursorRow !== firstCursorRow, { firstCursorRow, secondCursorRow });
 
+  const cursorColumn = `(() => {
+    const cell = document.querySelector('.cell--cursor');
+    if (!cell) return null;
+    return [...cell.closest('tr').children].indexOf(cell);
+  })()`;
+  const columnBeforeTab = await evaluate(cursorColumn);
+  for (const type of ['keyDown', 'keyUp']) {
+    await client.send('Input.dispatchKeyEvent', {
+      type,
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9,
+      nativeVirtualKeyCode: 9,
+    });
+  }
+  await sleep(300);
+  const columnAfterTab = await evaluate(cursorColumn);
+  check('Tab 移动到下一个单元格', columnAfterTab === columnBeforeTab + 1, { columnBeforeTab, columnAfterTab });
+  check(
+    '焦点仍留在表格内',
+    (await evaluate("document.activeElement ? document.activeElement.className : ''")).includes('grid'),
+    await evaluate("document.activeElement ? document.activeElement.className : ''"),
+  );
+
+  for (const type of ['keyDown', 'keyUp']) {
+    await client.send('Input.dispatchKeyEvent', {
+      type,
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9,
+      nativeVirtualKeyCode: 9,
+      modifiers: 8,
+    });
+  }
+  await sleep(300);
+  check(
+    'Shift+Tab 回到上一个单元格',
+    (await evaluate(cursorColumn)) === columnBeforeTab,
+    { columnBeforeTab, afterShiftTab: await evaluate(cursorColumn) },
+  );
+
   // DevTools mouse events do not synthesise a contextmenu, so dispatch it directly.
   await evaluate(`(() => {
     const cell = [...document.querySelectorAll('.grid tbody tr td')].find((node) => !node.className.includes('rownum'));
@@ -516,13 +557,25 @@ async function main() {
         });
       }
       await clickByText('▶ 运行');
-      check('只执行光标所在语句', (await waitFor(VISIBLE_GRID_ROWS, 8000)) >= 3);
+      // The grid may still hold the previous result, so wait for the run to
+      // start and finish before judging what is on screen.
+      await waitFor(`(${VISIBLE_TEXT}).includes('停止')`, 5000);
+      check(
+        '只执行光标所在语句',
+        Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('▶ 运行') && ${VISIBLE_GRID_ROWS} >= 3`, 10000)),
+        await evaluate(VISIBLE_TEXT),
+      );
       check('后面的错误语句没有被执行', !(await evaluate(`(${VISIBLE_TEXT}).includes('执行失败')`)));
 
-      await clickByText('全部执行');
+      const runAllClicked = await clickByText('全部执行');
+      const runAllState = await evaluate(`(() => {
+        const button = [...document.querySelectorAll('button')].find((node) => node.innerText.trim() === '全部执行');
+        return { clicked: ${JSON.stringify(runAllClicked)}, found: Boolean(button), disabled: button ? button.disabled : null };
+      })()`);
       check(
         '全部执行会跑到后面的语句并报错',
         Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('执行失败')`, 8000)),
+        { runAllState, text: (await evaluate(VISIBLE_TEXT)).slice(0, 200) },
       );
 
       await selectAllInEditor();

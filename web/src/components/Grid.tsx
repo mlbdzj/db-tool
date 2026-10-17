@@ -167,14 +167,20 @@ export function Grid({
     }
   }
 
+  /** Moves the cell cursor and keeps the row selection in step with it. */
+  function moveTo(rowIndex: number, columnIndex: number) {
+    setCursor({ row: rowIndex, column: columnIndex });
+    onSelectRow?.(rowIndex);
+    revealRow(rowIndex);
+  }
+
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (editing) return;
     const row = cursor?.row ?? 0;
     const column = cursor?.column ?? 0;
     const move = (nextRow: number, nextColumn: number) => {
       event.preventDefault();
-      setCursor({ row: nextRow, column: nextColumn });
-      revealRow(nextRow);
+      moveTo(nextRow, nextColumn);
     };
 
     switch (event.key) {
@@ -190,6 +196,17 @@ export function Grid({
       case 'ArrowLeft':
         move(row, Math.max(0, column - 1));
         return;
+      case 'Tab': {
+        // Tab walks the grid cell by cell; the browser default would leave the
+        // table and jump to the first focusable element on the page.
+        const total = rows.length * columns.length;
+        if (total === 0) return;
+        const nextIndex = row * columns.length + column + (event.shiftKey ? -1 : 1);
+        if (nextIndex < 0 || nextIndex >= total) return;
+        event.preventDefault();
+        moveTo(Math.floor(nextIndex / columns.length), nextIndex % columns.length);
+        return;
+      }
       case 'Enter':
       case 'F2':
         if (editable && rows.length > 0) {
@@ -213,6 +230,9 @@ export function Grid({
       className="grid"
       ref={containerRef}
       tabIndex={0}
+      onFocus={() => {
+        if (!cursor && rows.length > 0 && columns.length > 0) setCursor({ row: 0, column: 0 });
+      }}
       onKeyDown={handleKeyDown}
       onScroll={(event) => {
         setScrollTop(event.currentTarget.scrollTop);
@@ -314,6 +334,16 @@ export function Grid({
                               } else if (event.key === 'Escape') {
                                 event.preventDefault();
                                 setEditing(null);
+                              } else if (event.key === 'Tab') {
+                                // Commit, then continue walking the grid.
+                                event.preventDefault();
+                                commit(rowIndex, columnIndex);
+                                const total = rows.length * columns.length;
+                                const nextIndex =
+                                  rowIndex * columns.length + columnIndex + (event.shiftKey ? -1 : 1);
+                                if (nextIndex >= 0 && nextIndex < total) {
+                                  moveTo(Math.floor(nextIndex / columns.length), nextIndex % columns.length);
+                                }
                               }
                             }}
                           />
