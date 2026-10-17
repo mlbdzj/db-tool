@@ -304,7 +304,7 @@ async function main() {
   })()`);
   check('打开了数据表标签页', Boolean(await waitFor("document.body.innerText.includes('▤ users')")));
   check('表格渲染出数据行', (await waitFor(VISIBLE_GRID_ROWS)) >= 3, await evaluate(VISIBLE_GRID_ROWS));
-  check('显示了总行数', (await evaluate(VISIBLE_TEXT)).includes('共'));
+  check('分页控件就绪', (await evaluate(VISIBLE_TEXT)).includes('每页'));
   check('主键列有标记', (await evaluate(VISIBLE_TEXT)).includes('🔑'));
   check('有主键的表可编辑', (await evaluate(VISIBLE_TEXT)).includes('新增行'));
 
@@ -380,6 +380,52 @@ async function main() {
     }
   }
 
+  console.log('\n表格键盘与右键');
+  await clickAt(target, 1);
+  await sleep(300);
+  const cursorRow = `(() => {
+    const cell = document.querySelector('.cell--cursor');
+    return cell ? cell.closest('tr').querySelector('.rownum').innerText.trim() : null;
+  })()`;
+  const firstCursorRow = await evaluate(cursorRow);
+  check('单击后出现单元格光标', Boolean(firstCursorRow), firstCursorRow);
+
+  await evaluate("(() => { const grid = document.querySelector('.grid'); if (grid) grid.focus(); return Boolean(grid); })()");
+  for (const type of ['keyDown', 'keyUp']) {
+    await client.send('Input.dispatchKeyEvent', {
+      type,
+      key: 'ArrowDown',
+      code: 'ArrowDown',
+      windowsVirtualKeyCode: 40,
+      nativeVirtualKeyCode: 40,
+    });
+  }
+  await sleep(300);
+  const secondCursorRow = await evaluate(cursorRow);
+  check('方向键移动单元格光标', secondCursorRow !== firstCursorRow, { firstCursorRow, secondCursorRow });
+
+  // DevTools mouse events do not synthesise a contextmenu, so dispatch it directly.
+  await evaluate(`(() => {
+    const cell = [...document.querySelectorAll('.grid tbody tr td')].find((node) => !node.className.includes('rownum'));
+    if (!cell) return false;
+    const box = cell.getBoundingClientRect();
+    cell.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: Math.round(box.x + 20),
+      clientY: Math.round(box.y + 10),
+    }));
+    return true;
+  })()`);
+  check('右键弹出自定义菜单', Boolean(await waitFor("Boolean(document.querySelector('.grid-menu'))")));
+  check(
+    '菜单包含复制操作',
+    await evaluate("[...document.querySelectorAll('.grid-menu button')].some((node) => node.innerText.includes('复制单元格'))"),
+  );
+  await evaluate("document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
+  await sleep(200);
+
   console.log('\n未提交改动守卫');
   check(
     '标签页标出未提交改动',
@@ -397,6 +443,11 @@ async function main() {
   check('关闭标签页前弹出确认', Boolean(guardDialog) && guardDialog.message.includes('未提交'), guardDialog);
   check('取消后标签页仍然存在', await evaluate("document.body.innerText.includes('▤ users')"));
   check('改动仍标记为未提交', await evaluate("Boolean(document.querySelector('.tab .tab__dot--dirty'))"));
+
+  console.log('\n大表分页');
+  check('默认不再统计总行数', (await evaluate(VISIBLE_TEXT)).includes('统计总行数'));
+  await clickByText('统计总行数');
+  check('点击后才统计总行数', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('共 3 行')`, 8000)));
 
   console.log('\nSQL 查询标签页');
   await clickByText('新建 SQL 查询');
@@ -428,8 +479,56 @@ async function main() {
       check('查询结果渲染成表格', (await waitFor(VISIBLE_GRID_ROWS, 8000)) >= 3, await evaluate(VISIBLE_GRID_ROWS));
       check('结果区显示返回行数', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('返回')`)));
 
-      await client.send('Input.insertText', { text: ' SELECT * FROM nope_missing_table;' });
-      await sleep(300);
+      // Table names from the live schema should show up as suggestions.
+      await selectAllInEditor();
+      await sleep(150);
+      await client.send('Input.insertText', { text: 'SELECT * FROM us' });
+      check(
+        '输入表名前缀弹出补全建议',
+        Boolean(await waitFor("Boolean(document.querySelector('.cm-tooltip-autocomplete'))", 6000)),
+        await evaluate("document.querySelector('.cm-tooltip-autocomplete')?.innerText"),
+      );
+      for (const type of ['keyDown', 'keyUp']) {
+        await client.send('Input.dispatchKeyEvent', {
+          type,
+          key: 'Escape',
+          code: 'Escape',
+          windowsVirtualKeyCode: 27,
+          nativeVirtualKeyCode: 27,
+        });
+      }
+
+      // Ctrl+Enter runs the statement under the caret, not the whole script.
+      await selectAllInEditor();
+      await sleep(150);
+      await client.send('Input.insertText', {
+        text: 'SELECT id FROM users ORDER BY id;\nSELECT * FROM nope_missing_table;',
+      });
+      await sleep(250);
+      for (const type of ['keyDown', 'keyUp']) {
+        await client.send('Input.dispatchKeyEvent', {
+          type,
+          key: 'Home',
+          code: 'Home',
+          windowsVirtualKeyCode: 36,
+          nativeVirtualKeyCode: 36,
+          modifiers: 2,
+        });
+      }
+      await clickByText('▶ 运行');
+      check('只执行光标所在语句', (await waitFor(VISIBLE_GRID_ROWS, 8000)) >= 3);
+      check('后面的错误语句没有被执行', !(await evaluate(`(${VISIBLE_TEXT}).includes('执行失败')`)));
+
+      await clickByText('全部执行');
+      check(
+        '全部执行会跑到后面的语句并报错',
+        Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('执行失败')`, 8000)),
+      );
+
+      await selectAllInEditor();
+      await sleep(150);
+      await client.send('Input.insertText', { text: 'SELECT * FROM nope_missing_table;' });
+      await sleep(250);
       await pressEnter(2);
       check('错误 SQL 在界面里报错', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('执行失败')`, 8000)));
 
@@ -533,6 +632,60 @@ async function main() {
 
   await evaluate("document.querySelector('.overlay .modal__head button').click()");
   check('对话框可以关闭', Boolean(await waitFor("!document.querySelector('.overlay')", 3000)));
+
+  console.log('\n侧边栏插入表名');
+  await evaluate("(() => { const editor = document.querySelector('.cm-content'); if (editor) editor.focus(); return Boolean(editor); })()");
+  await selectAllInEditor();
+  await sleep(150);
+  for (const type of ['keyDown', 'keyUp']) {
+    await client.send('Input.dispatchKeyEvent', {
+      type,
+      key: 'Backspace',
+      code: 'Backspace',
+      windowsVirtualKeyCode: 8,
+      nativeVirtualKeyCode: 8,
+    });
+  }
+  const tableRowPoint = await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.sidebar__scroll .tree__row')].find(
+      (node) => node.innerText.includes('users') && !node.innerText.includes('active_users'),
+    );
+    if (!row) return null;
+    const box = row.getBoundingClientRect();
+    return { x: Math.round(box.x + 40), y: Math.round(box.y + box.height / 2) };
+  })()`);
+  check('找到侧边栏表行', Boolean(tableRowPoint), tableRowPoint);
+  if (tableRowPoint) {
+    await clickAt(tableRowPoint, 1);
+    await clickAt(tableRowPoint, 2);
+    check(
+      '双击表名插入到编辑器',
+      Boolean(
+        await waitFor(
+          `document.querySelector('.cm-content')?.innerText.trim() === ${JSON.stringify('`users`')}`,
+          5000,
+        ),
+      ),
+      await evaluate("document.querySelector('.cm-content')?.innerText"),
+    );
+  }
+
+  console.log('\n记住上次连接');
+  await client.send('Page.reload');
+  await sleep(1500);
+  check(
+    '启动后自动恢复上次的连接',
+    Boolean(await waitFor("document.querySelectorAll('.conn--active').length === 1", 8000)),
+  );
+  check(
+    '数据库列表随之加载',
+    Boolean(
+      await waitFor(
+        "[...document.querySelectorAll('.sidebar__scroll .tree__row')].some((row) => row.innerText.trim() === 'db_tool_selftest')",
+        8000,
+      ),
+    ),
+  );
 
   console.log('\n清理');
   const cleaned = await evaluate(`(async () => {

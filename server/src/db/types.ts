@@ -117,6 +117,8 @@ export interface Driver {
   listDatabases(): Promise<DatabaseInfo[]>;
   listTables(db: string | null): Promise<TableInfo[]>;
   listColumns(db: string | null, table: TableRef): Promise<ColumnInfo[]>;
+  /** table name -> column names, in one round trip, for editor completion. */
+  listSchemaMap(db: string | null): Promise<Record<string, string[]>>;
   run(db: string | null, sql: string, options?: RunOptions): Promise<ResultSet[]>;
   fetchRows(db: string | null, table: TableRef, opts: FetchRowsOptions): Promise<FetchRowsResult>;
   applyChanges(db: string | null, changes: RowChange[]): Promise<{ applied: number }>;

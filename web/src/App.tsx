@@ -22,11 +22,30 @@ function nextTabId(prefix: string): string {
   return `${prefix}-${tabSequence}`;
 }
 
+const LAST_VIEW_KEY = 'db-tool-last-view';
+
+interface LastView {
+  connectionId: string;
+  db: string | null;
+}
+
+function readLastView(): LastView | null {
+  try {
+    const raw = localStorage.getItem(LAST_VIEW_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LastView;
+    return typeof parsed?.connectionId === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
   );
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   const [activeDb, setActiveDb] = useState<string | null>(null);
@@ -84,9 +103,26 @@ export function App() {
   useEffect(() => {
     api
       .listConnections()
-      .then((result) => setConnections(result.connections))
+      .then((result) => {
+        setConnections(result.connections);
+        setConnectionsLoaded(true);
+        const stored = readLastView();
+        if (stored && result.connections.some((entry) => entry.id === stored.connectionId)) {
+          setActiveConnectionId(stored.connectionId);
+          if (stored.db) setActiveDb(stored.db);
+        }
+      })
       .catch((error: unknown) => notify(error instanceof Error ? error.message : String(error), 'error'));
   }, [notify]);
+
+  useEffect(() => {
+    if (!activeConnectionId) return;
+    try {
+      localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ connectionId: activeConnectionId, db: activeDb }));
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, [activeConnectionId, activeDb]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -167,6 +203,7 @@ export function App() {
           durationMs: null,
           running: false,
           activeResult: 0,
+          insertText: null,
         },
       ]);
       setActiveTabId(id);
@@ -210,6 +247,29 @@ export function App() {
       current.map((tab) => (tab.id === id && tab.kind === 'sql' ? ({ ...tab, ...patch } as TabState) : tab)),
     );
   }, []);
+
+  /** Double-clicking a table in the sidebar drops its (quoted) name at the caret. */
+  const insertTableName = useCallback(
+    (table: TableInfo) => {
+      if (!activeConnection) return;
+      const quoted =
+        activeConnection.kind === 'postgres'
+          ? `"${table.name.replace(/"/g, '""')}"`
+          : `\`${table.name.replace(/`/g, '``')}\``;
+      const text = `${quoted} `;
+      const active = tabs.find((tab) => tab.id === activeTabId && tab.kind === 'sql');
+      const target =
+        active ??
+        [...tabs].reverse().find((tab) => tab.kind === 'sql' && tab.connectionId === activeConnection.id);
+      if (target && target.kind === 'sql') {
+        setActiveTabId(target.id);
+        patchTab(target.id, { insertText: { text, nonce: Date.now() } });
+        return;
+      }
+      openQueryTab(activeConnection, activeDb, text);
+    },
+    [activeConnection, activeDb, activeTabId, tabs, patchTab, openQueryTab],
+  );
 
   const closeTab = useCallback((id: string) => {
     if (dirtyIdsRef.current.has(id)) {
@@ -257,6 +317,7 @@ export function App() {
         tables={tables}
         tablesLoading={tablesLoading}
         onOpenTable={(table) => activeConnection && openTableTab(activeConnection, activeDb, table)}
+        onInsertTable={insertTableName}
         onOpenQuery={() => activeConnection && openQueryTab(activeConnection, activeDb)}
         onRefresh={() => {
           if (activeConnection) void loadDatabases(activeConnection);
@@ -300,7 +361,7 @@ export function App() {
           ))}
         </div>
 
-        {!activeConnection && (
+        {connectionsLoaded && !activeConnection && (
           <div className="placeholder">
             <h2>先连接一个数据库</h2>
             <div>

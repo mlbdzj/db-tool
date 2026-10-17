@@ -3,6 +3,7 @@ import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { MySQL, PostgreSQL, sql as sqlLang } from '@codemirror/lang-sql';
 import { ApiError, api } from '../lib/api';
 import { downloadText, formatDuration, formatNumber, toCsv, toJson } from '../lib/format';
+import { statementAt } from '../lib/sql';
 import type { Connection, DatabaseInfo, ResultSet } from '../lib/types';
 import { Grid } from './Grid';
 
@@ -20,6 +21,8 @@ export interface SqlTabState {
   durationMs: number | null;
   running: boolean;
   activeResult: number;
+  /** Set by the sidebar to drop a table name into the editor at the caret. */
+  insertText: { text: string; nonce: number } | null;
 }
 
 interface Props {
@@ -36,6 +39,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
   const [editorHeight, setEditorHeight] = useState(220);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const queryIdRef = useRef<string | null>(null);
+  const [schemaMap, setSchemaMap] = useState<Record<string, string[]> | null>(null);
 
   /** Jump to the line the driver blamed, so the caret lands on the problem. */
   useEffect(() => {
@@ -48,21 +52,74 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
     view.focus();
   }, [tab.errorLine, tab.error]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setSchemaMap(null);
+    api
+      .schemaMap(connection.id, tab.db)
+      .then((result) => {
+        if (!cancelled) setSchemaMap(result.schema);
+      })
+      .catch(() => {
+        if (!cancelled) setSchemaMap({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.id, tab.db]);
+
+  useEffect(() => {
+    const payload = tab.insertText;
+    if (!payload) return;
+    const view = editorRef.current?.view;
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+      changes: { from, to, insert: payload.text },
+      selection: { anchor: from + payload.text.length },
+    });
+    view.focus();
+  }, [tab.insertText]);
+
   const extensions = useMemo(
-    () => [sqlLang({ dialect: connection.kind === 'postgres' ? PostgreSQL : MySQL })],
-    [connection.kind],
+    () => [
+      sqlLang({
+        dialect: connection.kind === 'postgres' ? PostgreSQL : MySQL,
+        ...(schemaMap ? { schema: schemaMap } : {}),
+      }),
+    ],
+    [connection.kind, schemaMap],
   );
 
   const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   const result = tab.results?.[tab.activeResult] ?? null;
 
-  async function run(confirmUnsafe = false) {
+  async function run(confirmUnsafe = false, wholeScript = false) {
     if (tab.running) return;
-    const statement = tab.sql.trim();
+    const view = editorRef.current?.view;
+    const selection = view?.state.selection.main;
+    let source = '';
+    let offset = 0;
+
+    if (wholeScript || !view || !selection) {
+      source = tab.sql;
+    } else if (!selection.empty) {
+      source = view.state.sliceDoc(selection.from, selection.to);
+      offset = selection.from;
+    } else {
+      const segment = statementAt(tab.sql, selection.head);
+      source = segment?.text ?? tab.sql;
+      offset = segment?.from ?? 0;
+    }
+
+    const statement = source.trim();
     if (!statement) {
-      onNotify('请输入要执行的 SQL', 'error');
+      onNotify('光标所在位置没有可执行的 SQL', 'error');
       return;
     }
+    // Trimming dropped leading whitespace; keep the offset aligned so the
+    // reported error line still points at the real line in the editor.
+    offset += source.length - source.trimStart().length;
     const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     queryIdRef.current = queryId;
     onPatch({ running: true, error: null, errorKind: null, errorLine: null, errorColumn: null });
@@ -112,7 +169,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
         return;
       }
       const location =
-        error instanceof ApiError && error.position ? positionOf(statement, error.position) : null;
+        error instanceof ApiError && error.position ? positionOf(tab.sql, offset + error.position) : null;
       onPatch({
         running: false,
         results: null,
@@ -172,8 +229,12 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
           type="button"
           className={tab.running ? 'btn btn--danger' : 'btn btn--primary'}
           onClick={() => void (tab.running ? stop() : run())}
+          title="执行选中内容；没有选中时执行光标所在语句"
         >
           {tab.running ? '■ 停止' : '▶ 运行'}
+        </button>
+        <button type="button" className="btn" onClick={() => void run(false, true)} disabled={tab.running}>
+          全部执行
         </button>
         <span className="badge">Ctrl / ⌘ + Enter</span>
         {connection.safeMode && <span className="badge badge--ok">安全模式</span>}
@@ -204,7 +265,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
             theme={theme}
             extensions={extensions}
             onChange={(value) => onPatch({ sql: value })}
-            basicSetup={{ lineNumbers: true, highlightActiveLine: true, foldGutter: true, autocompletion: false }}
+            basicSetup={{ lineNumbers: true, highlightActiveLine: true, foldGutter: true, autocompletion: true }}
             placeholder="在这里写 SQL，Ctrl / ⌘ + Enter 执行"
           />
         </div>

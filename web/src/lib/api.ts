@@ -69,6 +69,11 @@ export const api = {
       `/connections/${id}/columns?db=${encodeURIComponent(db ?? '')}&table=${encodeURIComponent(table)}` +
         (schema ? `&schema=${encodeURIComponent(schema)}` : ''),
     ),
+  schemaMap: (id: string, db: string | null) =>
+    request<{ schema: Record<string, string[]> }>(
+      'GET',
+      `/connections/${id}/schema?db=${encodeURIComponent(db ?? '')}`,
+    ),
   query: (id: string, db: string | null, sql: string, confirmUnsafe = false, queryId?: string) =>
     request<QueryResponse>('POST', `/connections/${id}/query`, { db, sql, confirmUnsafe, queryId }),
   cancelQuery: (id: string, queryId: string) =>

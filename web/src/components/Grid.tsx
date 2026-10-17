@@ -49,6 +49,20 @@ export function Grid({
   const [viewport, setViewport] = useState(600);
   const [editing, setEditing] = useState<{ row: number; column: number } | null>(null);
   const [draft, setDraft] = useState('');
+  const [cursor, setCursor] = useState<{ row: number; column: number } | null>(null);
+  const [copied, setCopied] = useState<{ row: number; column: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; row: number; column: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -104,11 +118,106 @@ export function Grid({
     [draft, editing, onCellCommit, pendingCells, rows],
   );
 
+  function valueAt(rowIndex: number, columnIndex: number): unknown {
+    const key = cellKey(rowIndex, columnIndex);
+    return pendingCells?.has(key) ? pendingCells.get(key) : rows[rowIndex]?.[columnIndex];
+  }
+
+  function startEdit(rowIndex: number, columnIndex: number) {
+    const value = valueAt(rowIndex, columnIndex);
+    setCursor({ row: rowIndex, column: columnIndex });
+    setEditing({ row: rowIndex, column: columnIndex });
+    setDraft(value === null || value === undefined ? '' : cellText(value));
+  }
+
+  function plainText(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* clipboard unavailable: the selection still works */
+    }
+  }
+
+  function copyCell(rowIndex: number, columnIndex: number) {
+    void copyText(plainText(valueAt(rowIndex, columnIndex)));
+    setCopied({ row: rowIndex, column: columnIndex });
+    window.setTimeout(() => setCopied(null), 700);
+  }
+
+  function copyRow(rowIndex: number) {
+    void copyText(columns.map((_, columnIndex) => plainText(valueAt(rowIndex, columnIndex))).join('\t'));
+    setCopied({ row: rowIndex, column: -1 });
+    window.setTimeout(() => setCopied(null), 700);
+  }
+
+  /** Keeps the cursor row inside the scroll viewport without jumping the page. */
+  function revealRow(rowIndex: number) {
+    const element = containerRef.current;
+    if (!element) return;
+    const top = rowIndex * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (bottom > element.scrollTop + element.clientHeight) {
+      element.scrollTop = bottom - element.clientHeight;
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (editing) return;
+    const row = cursor?.row ?? 0;
+    const column = cursor?.column ?? 0;
+    const move = (nextRow: number, nextColumn: number) => {
+      event.preventDefault();
+      setCursor({ row: nextRow, column: nextColumn });
+      revealRow(nextRow);
+    };
+
+    switch (event.key) {
+      case 'ArrowDown':
+        move(Math.min(rows.length - 1, row + 1), column);
+        return;
+      case 'ArrowUp':
+        move(Math.max(0, row - 1), column);
+        return;
+      case 'ArrowRight':
+        move(row, Math.min(columns.length - 1, column + 1));
+        return;
+      case 'ArrowLeft':
+        move(row, Math.max(0, column - 1));
+        return;
+      case 'Enter':
+      case 'F2':
+        if (editable && rows.length > 0) {
+          event.preventDefault();
+          startEdit(row, column);
+        }
+        return;
+      case 'Escape':
+        setCursor(null);
+        return;
+      default:
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && rows.length > 0) {
+          event.preventDefault();
+          copyCell(row, column);
+        }
+    }
+  }
+
   return (
     <div
       className="grid"
       ref={containerRef}
-      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onScroll={(event) => {
+        setScrollTop(event.currentTarget.scrollTop);
+        setMenu(null);
+      }}
     >
       {rows.length === 0 ? (
         <div className="panel-message">{emptyText}</div>
@@ -168,6 +277,10 @@ export function Grid({
                       value === null || value === undefined ? 'null' : '',
                       hasPending ? 'cell--edited' : '',
                       column.primaryKey ? 'cell--pk' : '',
+                      cursor?.row === rowIndex && cursor.column === columnIndex ? 'cell--cursor' : '',
+                      copied?.row === rowIndex && (copied.column === columnIndex || copied.column === -1)
+                        ? 'cell--copied'
+                        : '',
                     ]
                       .filter(Boolean)
                       .join(' ');
@@ -176,15 +289,16 @@ export function Grid({
                         key={column.name + columnIndex}
                         className={classes}
                         title={text}
-                        onDoubleClick={
-                          editable
-                            ? () => {
-                                setEditing({ row: rowIndex, column: columnIndex });
-                                setDraft(value === null || value === undefined ? '' : text);
-                              }
-                            : undefined
-                        }
-                        onClick={onSelectRow ? () => onSelectRow(rowIndex) : undefined}
+                        onDoubleClick={editable ? () => startEdit(rowIndex, columnIndex) : undefined}
+                        onClick={() => {
+                          setCursor({ row: rowIndex, column: columnIndex });
+                          onSelectRow?.(rowIndex);
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          setCursor({ row: rowIndex, column: columnIndex });
+                          setMenu({ x: event.clientX, y: event.clientY, row: rowIndex, column: columnIndex });
+                        }}
                       >
                         {isEditing ? (
                           <input
@@ -219,6 +333,54 @@ export function Grid({
             )}
           </tbody>
         </table>
+      )}
+      {menu && (
+        <div
+          className="grid-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              copyCell(menu.row, menu.column);
+              setMenu(null);
+            }}
+          >
+            复制单元格
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              copyRow(menu.row);
+              setMenu(null);
+            }}
+          >
+            复制整行
+          </button>
+          {editable && (
+            <button
+              type="button"
+              onClick={() => {
+                startEdit(menu.row, menu.column);
+                setMenu(null);
+              }}
+            >
+              编辑此单元格
+            </button>
+          )}
+          {editable && (
+            <button
+              type="button"
+              onClick={() => {
+                onCellCommit?.(menu.row, menu.column, null);
+                setMenu(null);
+              }}
+            >
+              设为 NULL
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

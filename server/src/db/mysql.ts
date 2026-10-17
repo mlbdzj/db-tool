@@ -165,6 +165,27 @@ export function createMysqlDriver(conn: ConnectionRecord): Driver {
       });
     },
 
+    async listSchemaMap(db: string | null): Promise<Record<string, string[]>> {
+      const schema = db ?? conn.database ?? '';
+      if (!schema) return {};
+      const [rows] = await poolFor(db).query(
+        `SELECT table_name, column_name
+           FROM information_schema.columns
+          WHERE table_schema = ?
+          ORDER BY table_name, ordinal_position`,
+        [schema],
+      );
+      const map = new Map<string, string[]>();
+      for (const row of rows as unknown as unknown[][]) {
+        const table = String(row[0]);
+        const column = String(row[1]);
+        const bucket = map.get(table);
+        if (bucket) bucket.push(column);
+        else map.set(table, [column]);
+      }
+      return Object.fromEntries(map);
+    },
+
     async run(db: string | null, sql: string, options): Promise<ResultSet[]> {
       const pool = poolFor(db);
       // A dedicated connection makes cancellation well defined: KILL QUERY ends

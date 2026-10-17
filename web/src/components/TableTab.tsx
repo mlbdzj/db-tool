@@ -72,7 +72,8 @@ export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: 
         offset: page * pageSize,
         orderBy: sort,
         where,
-        withCount: true,
+        // Counting every page turn is expensive on large tables; ask on demand.
+        withCount: false,
       });
       setColumns(result.columns);
       setBaseRows(result.rows);
@@ -250,6 +251,22 @@ export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: 
     }
   }
 
+  async function countTotal() {
+    try {
+      const result = await api.fetchRows(connection.id, {
+        db: tab.db,
+        table: tab.table,
+        limit: 1,
+        offset: 0,
+        where,
+        withCount: true,
+      });
+      setTotal(result.total);
+    } catch (cause) {
+      onNotify(cause instanceof Error ? cause.message : String(cause), 'error');
+    }
+  }
+
   const gridColumns: GridColumn[] = columns.map((column) => ({
     name: column.name,
     type: column.dataType,
@@ -342,7 +359,13 @@ export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: 
           </span>
         )}
         <span className="spacer" />
-        <span className="badge">共 {total === null ? '—' : formatNumber(total)} 行</span>
+        {total === null ? (
+          <button type="button" className="btn" onClick={() => void countTotal()} disabled={loading}>
+            统计总行数
+          </button>
+        ) : (
+          <span className="badge">共 {formatNumber(total)} 行</span>
+        )}
         <select
           className="select"
           value={pageSize}
@@ -367,7 +390,7 @@ export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: 
         <button
           type="button"
           className="btn"
-          disabled={loading || (pageCount !== null && page + 1 >= pageCount)}
+          disabled={loading || (pageCount !== null ? page + 1 >= pageCount : baseRows.length < pageSize)}
           onClick={() => setPage((value) => value + 1)}
         >
           下一页

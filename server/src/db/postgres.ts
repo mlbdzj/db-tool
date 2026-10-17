@@ -183,6 +183,22 @@ export function createPostgresDriver(conn: ConnectionRecord): Driver {
 
     listColumns,
 
+    async listSchemaMap(db: string | null): Promise<Record<string, string[]>> {
+      const result = await poolFor(db).query(
+        `SELECT table_name, column_name
+           FROM information_schema.columns
+          WHERE table_schema NOT IN ${SYSTEM_SCHEMAS}
+          ORDER BY table_name, ordinal_position`,
+      );
+      const map = new Map<string, string[]>();
+      for (const row of result.rows as { table_name: string; column_name: string }[]) {
+        const bucket = map.get(row.table_name);
+        if (bucket) bucket.push(row.column_name);
+        else map.set(row.table_name, [row.column_name]);
+      }
+      return Object.fromEntries(map);
+    },
+
     async run(db: string | null, sql: string, options): Promise<ResultSet[]> {
       const pool = poolFor(db);
       const client = await pool.connect();

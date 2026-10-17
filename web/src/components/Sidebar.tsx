@@ -14,6 +14,7 @@ interface Props {
   tables: TableInfo[];
   tablesLoading: boolean;
   onOpenTable: (table: TableInfo) => void;
+  onInsertTable: (table: TableInfo) => void;
   onOpenQuery: () => void;
   onRefresh: () => void;
   showSystem: boolean;
@@ -39,6 +40,7 @@ export function Sidebar({
   tables,
   tablesLoading,
   onOpenTable,
+  onInsertTable,
   onOpenQuery,
   onRefresh,
   showSystem,
@@ -180,7 +182,8 @@ export function Sidebar({
                           tableKey(table) === activeTableKey ? 'tree__row tree__row--active' : 'tree__row'
                         }
                         onClick={() => onOpenTable(table)}
-                        title={table.comment ?? table.name}
+                        onDoubleClick={() => onInsertTable(table)}
+                        title={`${table.comment ?? table.name}（双击把表名插入编辑器）`}
                       >
                         <span className="tree__label">
                           {table.type === 'table' ? '▤' : '◫'} {table.name}

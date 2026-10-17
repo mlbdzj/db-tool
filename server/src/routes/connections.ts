@@ -120,6 +120,15 @@ connectionsRouter.get(
 );
 
 connectionsRouter.get(
+  '/:id/schema',
+  asyncRoute(async (req, res) => {
+    const { driver } = driverFrom(req);
+    const db = typeof req.query.db === 'string' && req.query.db.length ? req.query.db : null;
+    res.json({ schema: await driver.listSchemaMap(db) });
+  }),
+);
+
+connectionsRouter.get(
   '/:id',
   asyncRoute(async (req, res) => {
     res.json({ connection: toPublic(connectionFrom(req)) });

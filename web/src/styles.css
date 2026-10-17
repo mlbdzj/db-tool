@@ -603,6 +603,44 @@ textarea {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 65%, transparent);
 }
 
+.grid:focus {
+  outline: none;
+}
+
+.grid td.cell--cursor {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.grid td.cell--copied {
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+
+.grid-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 148px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.grid-menu button {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.grid-menu button:hover {
+  background: var(--bg-hover);
+}
+
 .grid td.cell--pk {
   color: var(--accent);
 }
