@@ -126,8 +126,27 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem('db-tool-theme', theme);
   }, [theme]);
+
+  const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeTabId) ?? null, [tabs, activeTabId]);
+
+  /** The status bar describes what is in front of the user, not the connection list. */
+  const activeStatus = useMemo(() => {
+    if (!activeTab) return '就绪';
+    if (activeTab.kind === 'table') {
+      return dirtyIds.has(activeTab.id) ? `${activeTab.title} · 有未提交改动` : `${activeTab.title} · 已同步`;
+    }
+    if (activeTab.running) return '查询执行中';
+    if (activeTab.error) {
+      return `上次执行失败${activeTab.errorLine ? ` · 第 ${activeTab.errorLine} 行` : ''}`;
+    }
+    if (activeTab.results) {
+      const rows = activeTab.results.reduce((sum, entry) => sum + entry.rowCount, 0);
+      const affected = activeTab.results.reduce((sum, entry) => sum + (entry.affectedRows ?? 0), 0);
+      return rows > 0 ? `返回 ${formatNumber(rows)} 行` : `影响 ${formatNumber(affected)} 行`;
+    }
+    return '未执行';
+  }, [activeTab, dirtyIds]);
 
   const loadDatabases = useCallback(
     async (connection: Connection) => {
@@ -327,7 +346,13 @@ export function App() {
         onToggleSystem={setShowSystem}
         activeTableKey={activeTableKey}
         theme={theme}
-        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+        onToggleTheme={() =>
+          setTheme((current) => {
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('db-tool-theme', next);
+            return next;
+          })
+        }
       />
 
       <main className="main">
@@ -435,7 +460,8 @@ export function App() {
                 {activeConnection.port}
               </span>
               <span>{activeDb ? `库 ${activeDb}` : '未选择数据库'}</span>
-              <span>{formatNumber(tables.length)} 张表</span>
+              <span className="statusbar__sep">·</span>
+              <span>{activeStatus}</span>
               <span className="spacer" />
               <span>{activeConnection.safeMode ? '安全模式已开启' : '安全模式关闭'}</span>
             </>

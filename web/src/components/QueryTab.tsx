@@ -36,7 +36,7 @@ interface Props {
 }
 
 export function QueryTab({ connection, databases, tab, visible, onPatch, onNotify, onOpenHistory }: Props) {
-  const [editorHeight, setEditorHeight] = useState(220);
+  const [manualHeight, setManualHeight] = useState<number | null>(null);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const queryIdRef = useRef<string | null>(null);
   const [schemaMap, setSchemaMap] = useState<Record<string, string[]> | null>(null);
@@ -93,6 +93,14 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
 
   const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   const result = tab.results?.[tab.activeResult] ?? null;
+
+  /** Short statements should not reserve a tall empty editor. */
+  const lineCount = tab.sql.split('\n').length;
+  const autoHeight = Math.min(
+    Math.max(140, lineCount * 20 + 30),
+    Math.max(200, Math.round(window.innerHeight * 0.45)),
+  );
+  const editorHeight = manualHeight ?? autoHeight;
 
   async function run(confirmUnsafe = false, wholeScript = false) {
     if (tab.running) return;
@@ -198,7 +206,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
     const startY = event.clientY;
     const startHeight = editorHeight;
     const move = (moveEvent: MouseEvent) => {
-      setEditorHeight(Math.min(Math.max(90, startHeight + moveEvent.clientY - startY), window.innerHeight - 260));
+      setManualHeight(Math.min(Math.max(90, startHeight + moveEvent.clientY - startY), window.innerHeight - 260));
     };
     const stop = () => {
       window.removeEventListener('mousemove', move);
@@ -227,7 +235,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
         </select>
         <button
           type="button"
-          className={tab.running ? 'btn btn--danger' : 'btn btn--primary'}
+          className={tab.running ? 'btn btn--danger' : 'btn btn--primary btn--run'}
           onClick={() => void (tab.running ? stop() : run())}
           title="执行选中内容；没有选中时执行光标所在语句"
         >

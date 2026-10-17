@@ -77,11 +77,16 @@ export function Sidebar({
           DB Tool
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button type="button" className="btn btn--ghost" title="切换主题" onClick={onToggleTheme}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            title={`切换主题（当前：${theme === 'dark' ? '深色' : '浅色'}）`}
+            onClick={onToggleTheme}
+          >
             {theme === 'dark' ? '☾' : '☀'}
           </button>
           <button type="button" className="btn btn--ghost" title="新建连接" onClick={onNewConnection}>
-            ＋
+            ＋ 连接
           </button>
         </div>
       </div>
@@ -161,7 +166,7 @@ export function Sidebar({
                   />
                 </div>
                 <div style={{ padding: '0 10px 8px' }}>
-                  <button type="button" className="btn btn--primary" style={{ width: '100%', justifyContent: 'center' }} onClick={onOpenQuery}>
+                  <button type="button" className="btn btn--accent" style={{ width: '100%', justifyContent: 'center' }} onClick={onOpenQuery}>
                     新建 SQL 查询
                   </button>
                 </div>

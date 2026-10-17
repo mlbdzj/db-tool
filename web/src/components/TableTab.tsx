@@ -404,7 +404,14 @@ export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: 
         </div>
       )}
 
-      {!error && (
+      {!error && loading && baseRows.length === 0 && (
+        <div className="skeleton" aria-hidden>
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((row) => (
+            <div key={row} className="skeleton__row" />
+          ))}
+        </div>
+      )}
+      {!error && !(loading && baseRows.length === 0) && (
         <Grid
           columns={gridColumns}
           rows={displayRows}
