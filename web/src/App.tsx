@@ -35,12 +35,15 @@ export function App() {
   const [showSystem, setShowSystem] = useState(false);
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<{ connection: Connection | null } | null>(null);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
   const tabsRef = useRef<TabState[]>([]);
   tabsRef.current = tabs;
+  const dirtyIdsRef = useRef<Set<string>>(new Set());
+  dirtyIdsRef.current = dirtyIds;
 
   const activeConnection = useMemo(
     () => connections.find((connection) => connection.id === activeConnectionId) ?? null,
@@ -53,6 +56,30 @@ export function App() {
     setToasts((current) => [...current, { id, text, kind }].slice(-4));
     setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), 4200);
   }, []);
+
+  /** Table tabs report their uncommitted edits here so tab close can be guarded. */
+  const setTabDirty = useCallback((tabId: string, dirty: boolean) => {
+    setDirtyIds((current) => {
+      if (current.has(tabId) === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(tabId);
+      else next.delete(tabId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    window.dbToolShell?.setDirtyState?.(dirtyIds.size > 0);
+    // In the desktop shell the main process owns the close prompt. Registering
+    // beforeunload there would cancel the close silently instead of prompting.
+    if (window.dbToolShell || dirtyIds.size === 0) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirtyIds]);
 
   useEffect(() => {
     api
@@ -134,6 +161,9 @@ export function App() {
           sql,
           results: null,
           error: null,
+          errorKind: null,
+          errorLine: null,
+          errorColumn: null,
           durationMs: null,
           running: false,
           activeResult: 0,
@@ -182,10 +212,20 @@ export function App() {
   }, []);
 
   const closeTab = useCallback((id: string) => {
+    if (dirtyIdsRef.current.has(id)) {
+      const confirmed = window.confirm('这个标签页里还有未提交的改动，关闭后这些改动会丢失。确定关闭？');
+      if (!confirmed) return;
+    }
     const current = tabsRef.current;
     const index = current.findIndex((tab) => tab.id === id);
     const next = current.filter((tab) => tab.id !== id);
     setTabs(next);
+    setDirtyIds((dirty) => {
+      if (!dirty.has(id)) return dirty;
+      const updated = new Set(dirty);
+      updated.delete(id);
+      return updated;
+    });
     setActiveTabId((active) => (active === id ? (next[index]?.id ?? next[index - 1]?.id ?? null) : active));
   }, []);
 
@@ -241,7 +281,10 @@ export function App() {
               <span className="tab__label">
                 {tab.kind === 'sql' ? `SQL · ${tab.db ?? '默认库'}` : `▤ ${tab.title}`}
               </span>
-              {tab.kind === 'sql' && tab.running && <span className="tab__dot" />}
+              {tab.kind === 'sql' && tab.running && <span className="tab__dot tab__dot--running" title="正在执行" />}
+              {tab.kind === 'table' && dirtyIds.has(tab.id) && (
+                <span className="tab__dot tab__dot--dirty" title="有未提交的改动" />
+              )}
               <span
                 className="tab__close"
                 role="button"
@@ -317,6 +360,7 @@ export function App() {
                 tab={tab}
                 visible={visible}
                 onNotify={notify}
+                onDirtyChange={(dirty) => setTabDirty(tab.id, dirty)}
               />
             );
           })}

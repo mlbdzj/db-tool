@@ -165,9 +165,33 @@ export function createMysqlDriver(conn: ConnectionRecord): Driver {
       });
     },
 
-    async run(db: string | null, sql: string): Promise<ResultSet[]> {
-      const [rows, fields] = await poolFor(db).query(sql);
-      return normalize(rows, fields);
+    async run(db: string | null, sql: string, options): Promise<ResultSet[]> {
+      const pool = poolFor(db);
+      // A dedicated connection makes cancellation well defined: KILL QUERY ends
+      // the statement while leaving the rest of the pool untouched.
+      const client = await pool.getConnection();
+      const threadId = Number((client as unknown as { threadId: number }).threadId);
+      const signal = options?.signal;
+      const cancel = () => {
+        void pool.query(`KILL QUERY ${threadId}`).catch(() => undefined);
+      };
+
+      if (signal?.aborted) {
+        client.release();
+        throw new Error('查询已取消');
+      }
+      signal?.addEventListener('abort', cancel, { once: true });
+
+      try {
+        const [rows, fields] = await client.query(sql);
+        return normalize(rows, fields);
+      } catch (error) {
+        if (signal?.aborted) throw new Error('查询已取消');
+        throw error;
+      } finally {
+        signal?.removeEventListener('abort', cancel);
+        client.release();
+      }
     },
 
     async fetchRows(db: string | null, table: TableRef, opts: FetchRowsOptions): Promise<FetchRowsResult> {

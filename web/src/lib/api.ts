@@ -17,6 +17,7 @@ if (tokenFromUrl) localStorage.setItem('db-tool-token', tokenFromUrl);
 
 export class ApiError extends Error {
   status: number;
+  code: string | null;
   detail: string | null;
   hint: string | null;
   position: number | null;
@@ -26,6 +27,7 @@ export class ApiError extends Error {
   constructor(status: number, payload: Record<string, unknown>) {
     super(String(payload.message ?? payload.error ?? '请求失败'));
     this.status = status;
+    this.code = typeof payload.code === 'string' ? payload.code : null;
     this.kind = payload.error === 'unscoped_write' ? 'unscoped_write' : 'generic';
     this.detail = typeof payload.detail === 'string' ? payload.detail : null;
     this.hint = typeof payload.hint === 'string' ? payload.hint : null;
@@ -67,8 +69,10 @@ export const api = {
       `/connections/${id}/columns?db=${encodeURIComponent(db ?? '')}&table=${encodeURIComponent(table)}` +
         (schema ? `&schema=${encodeURIComponent(schema)}` : ''),
     ),
-  query: (id: string, db: string | null, sql: string, confirmUnsafe = false) =>
-    request<QueryResponse>('POST', `/connections/${id}/query`, { db, sql, confirmUnsafe }),
+  query: (id: string, db: string | null, sql: string, confirmUnsafe = false, queryId?: string) =>
+    request<QueryResponse>('POST', `/connections/${id}/query`, { db, sql, confirmUnsafe, queryId }),
+  cancelQuery: (id: string, queryId: string) =>
+    request<{ cancelled: boolean }>('POST', `/connections/${id}/query/cancel`, { queryId }),
   fetchRows: (
     id: string,
     payload: {

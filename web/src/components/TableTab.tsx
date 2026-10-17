@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, downloadExport } from '../lib/api';
 import { formatNumber } from '../lib/format';
 import type { ColumnInfo, Connection, RowChange } from '../lib/types';
@@ -18,6 +18,8 @@ interface Props {
   tab: TableTabState;
   visible: boolean;
   onNotify: (text: string, kind?: 'ok' | 'error') => void;
+  /** Lets the shell warn before a tab or the window is closed with edits in flight. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface InsertedRow {
@@ -31,7 +33,7 @@ function isNumericType(dataType: string): boolean {
   return /int|numeric|decimal|real|double|float|serial|money|bit/i.test(dataType);
 }
 
-export function TableTab({ connection, tab, visible, onNotify }: Props) {
+export function TableTab({ connection, tab, visible, onNotify, onDirtyChange }: Props) {
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [baseRows, setBaseRows] = useState<unknown[][]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -122,6 +124,12 @@ export function TableTab({ connection, tab, visible, onNotify }: Props) {
 
   const pendingCount = edits.size + deleted.size + inserted.length;
   const editable = columns.length > 0 && pkIndexes.length > 0;
+
+  const notifyDirty = useRef(onDirtyChange);
+  notifyDirty.current = onDirtyChange;
+  useEffect(() => {
+    notifyDirty.current?.(pendingCount > 0);
+  }, [pendingCount]);
 
   function handleCellCommit(rowIndex: number, columnIndex: number, value: unknown) {
     if (rowIndex >= visibleBase.length) {

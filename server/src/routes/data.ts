@@ -9,6 +9,9 @@ import { HttpError, asyncRoute, driverFrom, optionalString, requireString } from
 
 export const dataRouter = Router();
 
+/** In-flight statements, keyed by the client-supplied query id. */
+const runningQueries = new Map<string, AbortController>();
+
 function tableRefOf(value: unknown): TableRef {
   if (!value || typeof value !== 'object') throw new HttpError(400, '缺少表信息');
   const raw = value as { schema?: unknown; table?: unknown };
@@ -28,9 +31,10 @@ dataRouter.post(
   '/:id/query',
   asyncRoute(async (req, res) => {
     const { connection, driver } = driverFrom(req);
-    const body = req.body as { db?: unknown; sql?: unknown; confirmUnsafe?: unknown };
+    const body = req.body as { db?: unknown; sql?: unknown; confirmUnsafe?: unknown; queryId?: unknown };
     const sql = requireString(body.sql, 'SQL 语句');
     const db = optionalString(body.db);
+    const queryId = optionalString(body.queryId);
 
     if (connection.safeMode !== false && body.confirmUnsafe !== true) {
       const flagged = findUnscopedWrites(sql);
@@ -44,34 +48,71 @@ dataRouter.post(
       }
     }
 
+    const controller = new AbortController();
+    if (queryId) runningQueries.set(queryId, controller);
+    // Dropping the HTTP request (closed tab, reloaded window) stops the statement.
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+
     const startedAt = Date.now();
+    let results: Awaited<ReturnType<typeof driver.run>> | undefined;
+    let failure: unknown = null;
     try {
-      const results = await driver.run(db, sql);
-      const durationMs = Date.now() - startedAt;
-      pushHistory({
-        connectionId: connection.id,
-        connectionName: connection.name,
-        database: db,
-        sql,
-        ok: true,
-        durationMs,
-        rowCount: results.reduce((sum, result) => sum + result.rowCount, 0),
-        error: null,
-      });
-      res.json({ results, durationMs });
+      results = await driver.run(db, sql, { signal: controller.signal });
     } catch (error) {
-      pushHistory({
-        connectionId: connection.id,
-        connectionName: connection.name,
-        database: db,
-        sql,
-        ok: false,
-        durationMs: Date.now() - startedAt,
-        rowCount: 0,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+      failure = error;
+    } finally {
+      if (queryId) runningQueries.delete(queryId);
     }
+
+    const durationMs = Date.now() - startedAt;
+    // Some servers finish an interrupted statement normally (MySQL's SLEEP()
+    // returns 1 when killed), so the client's intent decides how to report it.
+    const cancelled = controller.signal.aborted;
+    pushHistory({
+      connectionId: connection.id,
+      connectionName: connection.name,
+      database: db,
+      sql,
+      ok: !cancelled && failure === null,
+      durationMs,
+      rowCount: results?.reduce((sum, result) => sum + result.rowCount, 0) ?? 0,
+      error: cancelled
+        ? '查询已取消'
+        : failure
+          ? failure instanceof Error
+            ? failure.message
+            : String(failure)
+          : null,
+    });
+
+    if (cancelled) {
+      if (!res.headersSent) {
+        res.status(400).json({ error: '查询已取消', code: 'QUERY_CANCELLED' });
+      } else {
+        res.end();
+      }
+      return;
+    }
+    if (failure) throw failure;
+    res.json({ results, durationMs });
+  }),
+);
+
+dataRouter.post(
+  '/:id/query/cancel',
+  asyncRoute(async (req, res) => {
+    driverFrom(req); // validates the connection id
+    const body = req.body as { queryId?: unknown };
+    const queryId = optionalString(body.queryId);
+    const controller = queryId ? runningQueries.get(queryId) : undefined;
+    if (!controller) {
+      res.json({ cancelled: false });
+      return;
+    }
+    controller.abort();
+    res.json({ cancelled: true });
   }),
 );
 

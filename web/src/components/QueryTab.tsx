@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { MySQL, PostgreSQL, sql as sqlLang } from '@codemirror/lang-sql';
 import { ApiError, api } from '../lib/api';
 import { downloadText, formatDuration, formatNumber, toCsv, toJson } from '../lib/format';
@@ -14,6 +14,9 @@ export interface SqlTabState {
   sql: string;
   results: ResultSet[] | null;
   error: string | null;
+  errorKind: 'error' | 'cancelled' | null;
+  errorLine: number | null;
+  errorColumn: number | null;
   durationMs: number | null;
   running: boolean;
   activeResult: number;
@@ -31,6 +34,19 @@ interface Props {
 
 export function QueryTab({ connection, databases, tab, visible, onPatch, onNotify, onOpenHistory }: Props) {
   const [editorHeight, setEditorHeight] = useState(220);
+  const editorRef = useRef<ReactCodeMirrorRef>(null);
+  const queryIdRef = useRef<string | null>(null);
+
+  /** Jump to the line the driver blamed, so the caret lands on the problem. */
+  useEffect(() => {
+    if (!tab.errorLine) return;
+    const view = editorRef.current?.view;
+    if (!view) return;
+    const lineNumber = Math.min(Math.max(1, tab.errorLine), view.state.doc.lines);
+    const line = view.state.doc.line(lineNumber);
+    view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
+    view.focus();
+  }, [tab.errorLine, tab.error]);
 
   const extensions = useMemo(
     () => [sqlLang({ dialect: connection.kind === 'postgres' ? PostgreSQL : MySQL })],
@@ -47,13 +63,16 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
       onNotify('请输入要执行的 SQL', 'error');
       return;
     }
-    onPatch({ running: true, error: null });
+    const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    queryIdRef.current = queryId;
+    onPatch({ running: true, error: null, errorKind: null, errorLine: null, errorColumn: null });
     try {
-      const response = await api.query(connection.id, tab.db, statement, confirmUnsafe);
+      const response = await api.query(connection.id, tab.db, statement, confirmUnsafe, queryId);
       onPatch({
         results: response.results,
         durationMs: response.durationMs,
         error: null,
+        errorKind: null,
         running: false,
         activeResult: 0,
       });
@@ -80,11 +99,40 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
         onPatch({ running: false });
         return;
       }
+      if (error instanceof ApiError && error.code === 'QUERY_CANCELLED') {
+        onPatch({
+          running: false,
+          results: null,
+          error: '查询已取消',
+          errorKind: 'cancelled',
+          errorLine: null,
+          errorColumn: null,
+        });
+        onNotify('已取消执行', 'error');
+        return;
+      }
+      const location =
+        error instanceof ApiError && error.position ? positionOf(statement, error.position) : null;
       onPatch({
         running: false,
         results: null,
         error: error instanceof Error ? error.message : String(error),
+        errorKind: 'error',
+        errorLine: location?.line ?? null,
+        errorColumn: location?.column ?? null,
       });
+    } finally {
+      if (queryIdRef.current === queryId) queryIdRef.current = null;
+    }
+  }
+
+  async function stop() {
+    const queryId = queryIdRef.current;
+    if (!queryId) return;
+    try {
+      await api.cancelQuery(connection.id, queryId);
+    } catch {
+      /* the statement may already have finished */
     }
   }
 
@@ -120,8 +168,12 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
               </option>
             ))}
         </select>
-        <button type="button" className="btn btn--primary" onClick={() => void run()} disabled={tab.running}>
-          {tab.running ? '执行中…' : '▶ 运行'}
+        <button
+          type="button"
+          className={tab.running ? 'btn btn--danger' : 'btn btn--primary'}
+          onClick={() => void (tab.running ? stop() : run())}
+        >
+          {tab.running ? '■ 停止' : '▶ 运行'}
         </button>
         <span className="badge">Ctrl / ⌘ + Enter</span>
         {connection.safeMode && <span className="badge badge--ok">安全模式</span>}
@@ -146,6 +198,7 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
           }}
         >
           <CodeMirror
+            ref={editorRef}
             value={tab.sql}
             height="100%"
             theme={theme}
@@ -176,9 +229,14 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
       )}
 
       {tab.error && (
-        <div className="panel-message panel-message--error">
-          <strong>执行失败</strong>
+        <div className={tab.errorKind === 'cancelled' ? 'panel-message' : 'panel-message panel-message--error'}>
+          <strong>{tab.errorKind === 'cancelled' ? '已取消' : '执行失败'}</strong>
           <pre>{tab.error}</pre>
+          {tab.errorLine !== null && (
+            <div className="panel-note">
+              已定位到第 {tab.errorLine} 行{tab.errorColumn ? `第 ${tab.errorColumn} 列` : ''}
+            </div>
+          )}
         </div>
       )}
 
@@ -223,4 +281,11 @@ export function QueryTab({ connection, databases, tab, visible, onPatch, onNotif
       )}
     </div>
   );
+}
+
+/** Converts a 1-based character offset from the driver into line / column numbers. */
+function positionOf(sql: string, position: number): { line: number; column: number } {
+  const before = sql.slice(0, Math.max(0, position - 1));
+  const lines = before.split('\n');
+  return { line: lines.length, column: (lines[lines.length - 1] ?? '').length + 1 };
 }

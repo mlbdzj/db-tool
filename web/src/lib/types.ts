@@ -97,3 +97,12 @@ export interface TestResult {
   version: string | null;
   databaseCount: number;
 }
+
+declare global {
+  interface Window {
+    /** Injected by the Electron preload script; absent when running in a browser. */
+    dbToolShell?: {
+      setDirtyState?: (dirty: boolean) => void;
+    };
+  }
+}

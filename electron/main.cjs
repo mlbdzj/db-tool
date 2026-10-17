@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const path = require('node:path');
@@ -9,6 +9,8 @@ const DEV_URL = process.env.DB_TOOL_DEV_URL ?? '';
 let serverProcess = null;
 let mainWindow = null;
 let serverStderr = '';
+let hasUnsavedChanges = false;
+let closeDialogOpen = false;
 
 function serverEntry() {
   return path.join(__dirname, '..', 'server', 'dist', 'index.js');
@@ -84,12 +86,38 @@ function createWindow(url) {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  mainWindow.on('close', async (event) => {
+    const win = mainWindow;
+    if (!win || !hasUnsavedChanges || closeDialogOpen) return;
+    event.preventDefault();
+    closeDialogOpen = true;
+    try {
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning',
+        buttons: ['继续编辑', '放弃改动并退出'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        title: '有未提交的改动',
+        message: '表格里还有未提交的改动，直接退出会丢失这些改动。',
+        detail: '选「继续编辑」回到应用；选「放弃改动并退出」会关闭窗口，未提交的改动不会写入数据库。',
+      });
+      if (response === 1) {
+        hasUnsavedChanges = false;
+        win.destroy();
+      }
+    } finally {
+      closeDialogOpen = false;
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -126,6 +154,9 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    ipcMain.on('dbtool:dirty-state', (_event, dirty) => {
+      hasUnsavedChanges = Boolean(dirty);
+    });
     try {
       const server = await startServer();
       createWindow(DEV_URL || `${server.url}?token=${AUTH_TOKEN}`);

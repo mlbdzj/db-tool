@@ -183,8 +183,32 @@ export function createPostgresDriver(conn: ConnectionRecord): Driver {
 
     listColumns,
 
-    async run(db: string | null, sql: string): Promise<ResultSet[]> {
-      const raw = (await poolFor(db).query({ text: sql, rowMode: 'array' })) as unknown;
+    async run(db: string | null, sql: string, options): Promise<ResultSet[]> {
+      const pool = poolFor(db);
+      const client = await pool.connect();
+      const backendPid = Number((client as unknown as { processID: number }).processID);
+      const signal = options?.signal;
+      const cancel = () => {
+        void pool.query('SELECT pg_cancel_backend($1)', [backendPid]).catch(() => undefined);
+      };
+
+      if (signal?.aborted) {
+        client.release();
+        throw new Error('查询已取消');
+      }
+      signal?.addEventListener('abort', cancel, { once: true });
+
+      let raw: unknown;
+      try {
+        raw = await client.query({ text: sql, rowMode: 'array' } as never);
+      } catch (error) {
+        if (signal?.aborted) throw new Error('查询已取消');
+        throw error;
+      } finally {
+        signal?.removeEventListener('abort', cancel);
+        client.release();
+      }
+
       const list = Array.isArray(raw) ? (raw as unknown[]) : [raw];
       return list.map((entry) => {
         const result = entry as {

@@ -106,13 +106,18 @@ export interface RowChange {
   values?: Record<string, unknown>;
 }
 
+export interface RunOptions {
+  /** Aborts the statement server-side without dropping the connection. */
+  signal?: AbortSignal;
+}
+
 export interface Driver {
   readonly kind: DbKind;
   ping(): Promise<void>;
   listDatabases(): Promise<DatabaseInfo[]>;
   listTables(db: string | null): Promise<TableInfo[]>;
   listColumns(db: string | null, table: TableRef): Promise<ColumnInfo[]>;
-  run(db: string | null, sql: string): Promise<ResultSet[]>;
+  run(db: string | null, sql: string, options?: RunOptions): Promise<ResultSet[]>;
   fetchRows(db: string | null, table: TableRef, opts: FetchRowsOptions): Promise<FetchRowsResult>;
   applyChanges(db: string | null, changes: RowChange[]): Promise<{ applied: number }>;
   dispose(): Promise<void>;

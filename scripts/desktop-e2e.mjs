@@ -54,6 +54,7 @@ async function findPage() {
 function connect(url) {
   const socket = new WebSocket(url);
   const pending = new Map();
+  const dialogs = [];
   let nextId = 1;
 
   socket.addEventListener('message', (event) => {
@@ -63,6 +64,12 @@ function connect(url) {
       pending.delete(message.id);
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
+      return;
+    }
+    if (message.method === 'Page.javascriptDialogOpening') {
+      dialogs.push({ type: message.params?.type ?? '', message: message.params?.message ?? '' });
+      // Decline by default so a stray confirm cannot freeze the run.
+      socket.send(JSON.stringify({ id: nextId++, method: 'Page.handleJavaScriptDialog', params: { accept: false } }));
       return;
     }
     if (message.method === 'Runtime.exceptionThrown') {
@@ -81,6 +88,7 @@ function connect(url) {
   return {
     ready,
     close: () => socket.close(),
+    dialogs,
     send(method, params = {}) {
       const id = nextId++;
       return new Promise((resolve, reject) => {
@@ -161,6 +169,19 @@ async function main() {
         windowsVirtualKeyCode: 13,
         nativeVirtualKeyCode: 13,
         modifiers,
+      });
+    }
+  }
+
+  async function selectAllInEditor() {
+    for (const type of ['keyDown', 'keyUp']) {
+      await client.send('Input.dispatchKeyEvent', {
+        type,
+        key: 'a',
+        code: 'KeyA',
+        windowsVirtualKeyCode: 65,
+        nativeVirtualKeyCode: 65,
+        modifiers: 2,
       });
     }
   }
@@ -359,6 +380,24 @@ async function main() {
     }
   }
 
+  console.log('\n未提交改动守卫');
+  check(
+    '标签页标出未提交改动',
+    Boolean(await waitFor("Boolean(document.querySelector('.tab .tab__dot--dirty'))")),
+  );
+  const dialogBefore = client.dialogs.length;
+  await evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.tab')].find((node) => node.innerText.includes('users'));
+    const close = tab ? tab.querySelector('.tab__close') : null;
+    if (close) close.click();
+    return Boolean(close);
+  })()`);
+  await sleep(700);
+  const guardDialog = client.dialogs[dialogBefore];
+  check('关闭标签页前弹出确认', Boolean(guardDialog) && guardDialog.message.includes('未提交'), guardDialog);
+  check('取消后标签页仍然存在', await evaluate("document.body.innerText.includes('▤ users')"));
+  check('改动仍标记为未提交', await evaluate("Boolean(document.querySelector('.tab .tab__dot--dirty'))"));
+
   console.log('\nSQL 查询标签页');
   await clickByText('新建 SQL 查询');
   check('打开了 SQL 标签页', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('运行')`)));
@@ -393,11 +432,31 @@ async function main() {
       await sleep(300);
       await pressEnter(2);
       check('错误 SQL 在界面里报错', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('执行失败')`, 8000)));
+
+      // A runaway statement must be stoppable from the toolbar.
+      await selectAllInEditor();
+      await sleep(200);
+      await client.send('Input.insertText', { text: 'SELECT SLEEP(30);' });
+      await sleep(300);
+      await clickByText('▶ 运行');
+      check('运行中按钮变成停止', Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('停止')`, 5000)));
+      await sleep(1200);
+      await clickByText('■ 停止');
+      check(
+        '停止后显示已取消',
+        Boolean(await waitFor(`(${VISIBLE_TEXT}).includes('已取消')`, 8000)),
+        await evaluate(VISIBLE_TEXT),
+      );
     }
   }
 
   console.log('\n控制台');
   check('渲染进程没有报错', consoleErrors.length === 0, consoleErrors.slice(0, 5));
+  check(
+    '桌面桥接已注入（关窗守卫可用）',
+    (await evaluate("typeof window.dbToolShell?.setDirtyState")) === 'function',
+    await evaluate("typeof window.dbToolShell?.setDirtyState"),
+  );
 
   console.log('\n新建连接对话框');
   await evaluate(`(() => {
