@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 /** .../server  (works for both `src` during dev and `dist` when compiled) */
 const packageRoot = resolve(here, '..');
-/** repository root, also the app root inside the packaged desktop build */
+/** repository root */
 const projectRoot = resolve(packageRoot, '..');
 
 function ensureDir(dir: string): string {
@@ -23,12 +23,12 @@ export const secretKeyFile = join(dataDir, 'secret.key');
 export const host = process.env.DB_TOOL_HOST ?? '127.0.0.1';
 /**
  * 3000 is the conventional default for a Node service. `0` is honoured and asks
- * the operating system for a free port, which is what the desktop shell uses.
+ * the operating system for a free port, useful when running the service from
+ * another program.
  */
 const requestedPort = Number(process.env.DB_TOOL_PORT ?? 3000);
 export const preferredPort =
   Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort <= 65535 ? requestedPort : 3000;
-/** When set, every /api call must carry this token. Used by the desktop shell. */
+/** When set, every /api call must carry this token. */
 export const authToken = process.env.DB_TOOL_TOKEN ?? '';
-export const webDistDir = resolve(projectRoot, 'web', 'dist');
 export const version = '0.1.0';

@@ -249,15 +249,15 @@ async function main() {
 
   console.log('\n准备一个连接');
   const seeded = await evaluate(`(async () => {
-    const token = localStorage.getItem('db-tool-token') ?? '';
+    const token = window.dbToolShell?.token ?? '';
     const headers = { 'content-type': 'application/json', 'x-db-tool-token': token };
-    const list = await (await fetch('/api/connections', { headers })).json();
+    const list = await (await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections', { headers })).json();
     for (const connection of list.connections ?? []) {
       if (connection.name === ${JSON.stringify(SEED_NAME)}) {
-        await fetch('/api/connections/' + connection.id, { method: 'DELETE', headers });
+        await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections/' + connection.id, { method: 'DELETE', headers });
       }
     }
-    const created = await fetch('/api/connections', {
+    const created = await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections', {
       method: 'POST',
       headers,
       body: ${JSON.stringify(JSON.stringify(MYSQL))},
@@ -373,11 +373,11 @@ async function main() {
       );
 
       const untouched = await evaluate(`(async () => {
-        const token = localStorage.getItem('db-tool-token') ?? '';
+        const token = window.dbToolShell?.token ?? '';
         const headers = { 'content-type': 'application/json', 'x-db-tool-token': token };
-        const list = await (await fetch('/api/connections', { headers })).json();
+        const list = await (await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections', { headers })).json();
         const connection = (list.connections ?? []).find((entry) => entry.name === ${JSON.stringify(SEED_NAME)});
-        const response = await fetch('/api/connections/' + connection.id + '/query', {
+        const response = await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections/' + connection.id + '/query', {
           method: 'POST',
           headers,
           body: JSON.stringify({ db: ${JSON.stringify(MYSQL.database)}, sql: ${JSON.stringify(
@@ -761,9 +761,9 @@ async function main() {
   const secondName = '自检连接 B';
   const secondBody = JSON.stringify({ ...MYSQL, name: secondName, database: 'hotel_booking' });
   const createdSecond = await evaluate(`(async () => {
-    const token = localStorage.getItem('db-tool-token') ?? '';
+    const token = window.dbToolShell?.token ?? '';
     const headers = { 'content-type': 'application/json', 'x-db-tool-token': token };
-    const response = await fetch('/api/connections', {
+    const response = await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections', {
       method: 'POST',
       headers,
       body: ${JSON.stringify(secondBody)},
@@ -797,14 +797,14 @@ async function main() {
 
   console.log('\n清理');
   const cleaned = await evaluate(`(async () => {
-    const token = localStorage.getItem('db-tool-token') ?? '';
+    const token = window.dbToolShell?.token ?? '';
     const headers = { 'content-type': 'application/json', 'x-db-tool-token': token };
-    const list = await (await fetch('/api/connections', { headers })).json();
+    const list = await (await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections', { headers })).json();
     let removed = 0;
     for (const connection of list.connections ?? []) {
       if (![${JSON.stringify(SEED_NAME)}, ${JSON.stringify(secondName)}].includes(connection.name)) continue;
-      await fetch('/api/connections/' + connection.id + '/history', { method: 'DELETE', headers });
-      await fetch('/api/connections/' + connection.id, { method: 'DELETE', headers });
+      await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections/' + connection.id + '/history', { method: 'DELETE', headers });
+      await fetch((window.dbToolShell?.apiBase ?? '') + '/api/connections/' + connection.id, { method: 'DELETE', headers });
       removed += 1;
     }
     return removed;

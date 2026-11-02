@@ -11,9 +11,10 @@ import type {
   TestResult,
 } from './types';
 
-const tokenFromUrl = new URLSearchParams(window.location.search).get('token') ?? '';
-export const authToken = tokenFromUrl || localStorage.getItem('db-tool-token') || '';
-if (tokenFromUrl) localStorage.setItem('db-tool-token', tokenFromUrl);
+/** Injected by the Electron preload script; empty when opened outside the desktop shell. */
+const shell = window.dbToolShell;
+const apiBase = shell?.apiBase ?? '';
+export const authToken = shell?.token ?? '';
 
 export class ApiError extends Error {
   status: number;
@@ -37,7 +38,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${apiBase}/api${path}`, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
@@ -98,7 +99,7 @@ export const api = {
 
 /** Triggers a browser download for an export endpoint that streams a file. */
 export async function downloadExport(connectionId: string, payload: Record<string, unknown>): Promise<void> {
-  const response = await fetch(`/api/connections/${connectionId}/export`, {
+  const response = await fetch(`${apiBase}/api/connections/${connectionId}/export`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

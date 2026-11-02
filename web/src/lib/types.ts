@@ -100,8 +100,12 @@ export interface TestResult {
 
 declare global {
   interface Window {
-    /** Injected by the Electron preload script; absent when running in a browser. */
+    /** Injected by the Electron preload script. */
     dbToolShell?: {
+      /** Origin of the local API; empty while the dev server proxies /api. */
+      apiBase?: string;
+      /** One-time access token, generated per app launch. */
+      token?: string;
       setDirtyState?: (dirty: boolean) => void;
     };
   }

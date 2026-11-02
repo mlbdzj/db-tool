@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "author": "DB Tool",
-  "description": "A local-first database management tool for MySQL and PostgreSQL",
+  "description": "A local-first desktop database client for MySQL and PostgreSQL",
   "main": "electron/main.cjs",
   "workspaces": [
     "server",
@@ -13,6 +13,7 @@
     "dev": "concurrently -n api,ui -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
     "build": "npm run build:server && npm run build:web",
     "build:server": "npm --workspace server run build",
     "build:web": "npm --workspace web run build",

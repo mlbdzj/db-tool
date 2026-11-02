@@ -1,9 +1,7 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import cors from 'cors';
 import express, { type ErrorRequestHandler } from 'express';
-import { authToken, host, preferredPort, version, webDistDir } from './config.js';
+import { authToken, host, preferredPort, version } from './config.js';
 import { disposeAll } from './db/manager.js';
 import { registerRoutes } from './routes/index.js';
 import { HttpError, describeError } from './routes/helpers.js';
@@ -19,6 +17,8 @@ export function createApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.set('json replacer', jsonReplacer);
+  // The packaged window loads the renderer from disk, so its origin is `null`.
+  // Only this loopback service is reachable, and it is token guarded.
   app.use(cors());
   app.use(express.json({ limit: '16mb' }));
 
@@ -37,17 +37,6 @@ export function createApp(): express.Express {
   });
 
   registerRoutes(app);
-
-  if (existsSync(webDistDir)) {
-    app.use(express.static(webDistDir));
-    app.use((req, res, next) => {
-      if (req.method !== 'GET' || req.path.startsWith('/api')) {
-        next();
-        return;
-      }
-      res.sendFile(join(webDistDir, 'index.html'));
-    });
-  }
 
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     const status = error instanceof HttpError ? error.status : 400;

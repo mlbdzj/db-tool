@@ -1,12 +1,23 @@
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, protocol, net } = require('electron');
 const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 
 const AUTH_TOKEN = randomBytes(24).toString('hex');
 const DEV_URL = process.env.DB_TOOL_DEV_URL ?? '';
+/** Packaged renderer files, loaded through the privileged `app://` scheme. */
+const RENDERER_ROOT = path.join(__dirname, '..', 'web', 'dist');
+const APP_ENTRY = 'app://db-tool/index.html';
+
+// A real, secure origin (instead of file://) so ES modules, fetch and
+// localStorage behave exactly like they do in development.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 let serverProcess = null;
+let serverOrigin = '';
 let mainWindow = null;
 let serverStderr = '';
 let hasUnsavedChanges = false;
@@ -71,7 +82,7 @@ function startServer() {
   });
 }
 
-function createWindow(url) {
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -125,13 +136,15 @@ function createWindow(url) {
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event, target) => {
-    if (!target.startsWith(url.split('?')[0])) {
-      event.preventDefault();
-      if (/^https?:/i.test(target)) void shell.openExternal(target);
-    }
+    // The window is a single page application: any navigation means a link was
+    // clicked, so hand it to the system browser instead of replacing the app.
+    const appOrigin = DEV_URL ? DEV_URL.split('?')[0] : 'app://db-tool';
+    if (target.startsWith(appOrigin)) return;
+    event.preventDefault();
+    if (/^https?:/i.test(target)) void shell.openExternal(target);
   });
 
-  void mainWindow.loadURL(url);
+  void mainWindow.loadURL(DEV_URL || APP_ENTRY);
 }
 
 function stopServer() {
@@ -154,12 +167,36 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    // Serve the bundled UI from web/dist. Nothing serves it over HTTP, so the
+    // local service stays a pure API.
+    protocol.handle('app', (request) => {
+      const { pathname } = new URL(request.url);
+      const relative = decodeURIComponent(pathname === '/' ? '/index.html' : pathname);
+      const target = path.join(RENDERER_ROOT, relative);
+      if (target !== RENDERER_ROOT && !target.startsWith(`${RENDERER_ROOT}${path.sep}`)) {
+        return new Response('not found', { status: 404 });
+      }
+      return net.fetch(pathToFileURL(target).toString());
+    });
     ipcMain.on('dbtool:dirty-state', (_event, dirty) => {
       hasUnsavedChanges = Boolean(dirty);
     });
+    ipcMain.on('dbtool:context', (event) => {
+      event.returnValue = DEV_URL
+        ? { apiBase: '', token: '' }
+        : { apiBase: serverOrigin, token: AUTH_TOKEN };
+    });
     try {
-      const server = await startServer();
-      createWindow(DEV_URL || `${server.url}?token=${AUTH_TOKEN}`);
+      if (DEV_URL) {
+        // The dev server is started separately (npm run dev:desktop) and the
+        // window talks to it through its /api proxy, so no local service is
+        // spawned here.
+        createWindow();
+      } else {
+        const server = await startServer();
+        serverOrigin = server.url;
+        createWindow();
+      }
     } catch (error) {
       dialog.showErrorBox('无法启动 DB Tool', error instanceof Error ? error.message : String(error));
       app.quit();
